@@ -1,0 +1,33 @@
+{
+  "1773165838936": {
+    "name": "Sekai Night Club",
+    "city": "Houston",
+    "state": "TX",
+    "type": "nightclub",
+    "genres": [
+      "EDM",
+      "Hip Hop",
+      "Latin",
+      "R&B"
+    ],
+    "capacity": 500,
+    "targetAudience": "21-35 year olds, Houston nightlife crowd",
+    "competitors": [
+      "Clé Houston",
+      "Spire Houston",
+      "Rebel Houston"
+    ],
+    "customKeywords": [
+      "Houston nightlife",
+      "Houston weekend",
+      "bottle service Houston",
+      "DJ Houston",
+      "Houston club"
+    ],
+    "socialHandles": {
+      "instagram": "@sekaihouston",
+      "twitter": "@sekaihouston"
+    },
+    "id": "1773165838936"
+  }
+}

@@ -1,4 +1,5 @@
 const googleTrends = require('google-trends-api');
+const { getXSignals } = require('./twitter');
 const axios = require('axios');
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -100,10 +101,11 @@ async function getRedditSignals(keywords = [], city = '') {
 }
 
 // ─── CLAUDE INTELLIGENCE ─────────────────────────────────────────────────────
-async function generateIntelligence({ venueName, venueType, city, keywords, trends, redditSignals, placeDetails }) {
+async function generateIntelligence({ venueName, venueType, city, keywords, trends, redditSignals, xSignals, placeDetails }) {
   try {
     const trendsText = trends.map(t => `- "${t.keyword}": score ${t.score}, ${t.delta > 0 ? '+' + t.delta : t.delta}% vs last week, ${t.hot ? 'HOT' : 'stable'}`).join('\n');
     const redditText = redditSignals.slice(0, 4).map(r => `- r/${r.subreddit}: "${r.topic}" — ${r.upvotes} upvotes, ${r.comments} comments`).join('\n');
+    const xText = (xSignals || []).slice(0, 3).map(x => `- "${x.topic}": score ${x.score}, ${x.signal}${x.topTweet ? ', top tweet: "' + x.topTweet + '"' : ''}`).join('\n');
     const placeInfo = placeDetails ? `Rating: ${placeDetails.rating}/5 (${placeDetails.user_ratings_total} reviews), Types: ${placeDetails.types?.slice(0,3).join(', ')}` : '';
 
     const prompt = `You are Fillo's AI intelligence engine. Analyze this venue and generate a complete intelligence report.
@@ -119,6 +121,9 @@ ${trendsText || 'No trend data available'}
 
 LIVE REDDIT SIGNALS:
 ${redditText || 'No Reddit data available'}
+
+LIVE X (TWITTER) SIGNALS:
+${xText || 'No X data available'}
 
 Generate a JSON intelligence report. Respond ONLY with valid JSON, no markdown:
 {
@@ -169,16 +174,17 @@ async function runFullScan({ venueName, venueType, city, keywords, placeDetails 
   const geo = city ? 'US' : 'US'; // Could map city → state code later
   const searchKeywords = keywords?.length ? keywords : [venueName, `${city} nightlife`, `${city} events`];
 
-  const [trends, redditSignals] = await Promise.all([
+  const [trends, redditSignals, xSignals] = await Promise.all([
     getTrends(searchKeywords, geo),
     getRedditSignals(searchKeywords, city),
+    getXSignals(searchKeywords, city, venueType),
   ]);
 
-  console.log(`✅ Trends collected: ${trends.length}, Reddit signals: ${redditSignals.length}`);
+  console.log(`✅ Trends: ${trends.length}, Reddit: ${redditSignals.length}, X: ${xSignals.length}`);
 
   const intelligence = await generateIntelligence({
     venueName, venueType, city, keywords: searchKeywords,
-    trends, redditSignals, placeDetails,
+    trends, redditSignals, xSignals, placeDetails,
   });
 
   return {
@@ -200,6 +206,7 @@ async function runFullScan({ venueName, venueType, city, keywords, placeDetails 
       signal: `Score: ${t.score}/100, ${t.delta > 0 ? '+' : ''}${t.delta}% vs last week`,
     })),
     redditSignals,
+    xSignals,
     fomoSignals: intelligence.fomoSignals,
     drafts: intelligence.contentIdeas?.map(c => ({
       platform: c.platform,

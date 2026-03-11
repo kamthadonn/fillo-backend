@@ -40,9 +40,4 @@ app.listen(PORT, () => {
   console.log(`🌐 Visit: http://localhost:${PORT}`);
   console.log(`📡 Trends: http://localhost:${PORT}/api/trends`);
   console.log(`🔧 CMS: http://localhost:${PORT}/api/cms\n`);
-});
-```
-
-**2. Your `.env` has the FRONTEND_URL on the same line as the Netlify URL** — make sure it's:
-```
-FRONTEND_URL=https://quiet-longma-741471.netlify.app
+})

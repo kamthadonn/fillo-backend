@@ -18,6 +18,8 @@ app.get('/', (req, res) => {
 app.use('/api/trends', require('./routes/trends'));
 app.use('/api/cms', require('./routes/cms'));
 app.use('/api/onboarding', require('./routes/onboarding'));
+app.use('/api/stripe', require('./routes/stripe'));
+
 cron.schedule('0 * * * *', async () => {
   console.log('⚡ Fillo auto-scan running...');
   try {
@@ -39,3 +41,8 @@ app.listen(PORT, () => {
   console.log(`📡 Trends: http://localhost:${PORT}/api/trends`);
   console.log(`🔧 CMS: http://localhost:${PORT}/api/cms\n`);
 });
+```
+
+**2. Your `.env` has the FRONTEND_URL on the same line as the Netlify URL** — make sure it's:
+```
+FRONTEND_URL=https://quiet-longma-741471.netlify.app

@@ -97,3 +97,19 @@ Respond ONLY with valid JSON (no markdown, no backticks) in this exact format:
 });
 
 module.exports = router;
+// GET /api/demo/test
+router.get('/test', async (req, res) => {
+  try {
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 200,
+      messages: [{ role: 'user', content: 'Return this exact JSON with no other text: {"status": "Claude is working", "fomoScore": 85}' }],
+    });
+    const text = message.content[0].text.trim();
+    res.json({ raw: text, parsed: JSON.parse(text) });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;

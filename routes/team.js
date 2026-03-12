@@ -1,43 +1,31 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const { createClient } = require('@supabase/supabase-js');
-function getSupabase() { return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); }
+const crypto = require('crypto');
+
+const AUTH_SECRET = process.env.AUTH_SECRET || 'fillo-super-secret-2026';
+
+function getSupabase() {
+  const { createClient } = require('@supabase/supabase-js');
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+}
 
 function authRequired(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    req.user = jwt.verify(token, process.env.AUTH_SECRET);
+    req.user = jwt.verify(token, AUTH_SECRET);
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });
   }
 }
 
-function requireAdmin(req, res, next) {
-  if (req.user.role === 'viewer') {
-    return res.status(403).json({ error: 'Viewers cannot perform this action. Contact your account admin.' });
-  }
-  next();
-}
-
-function requireEnterprise(req, res, next) {
-  if (req.user.plan !== 'enterprise') {
-    return res.status(403).json({ error: 'Team members are an Enterprise feature.', upgrade: true });
-  }
-  next();
-}
-
-// GET /api/team — get all team members for account
-router.get('/', authRequired, requireEnterprise, async (req, res) => {
+router.get('/', authRequired, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('team_members')
-      .select('*, member:member_id(first_name, last_name, email, last_login)')
-      .eq('owner_id', req.user.id)
-      .order('created_at', { ascending: true });
-
+    const supabase = getSupabase();
+    const ownerId = req.user.ownerId || req.user.userId;
+    const { data, error } = await supabase.from('team_members').select('*').eq('owner_id', ownerId).order('created_at', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ success: true, members: data || [] });
   } catch (err) {
@@ -45,107 +33,92 @@ router.get('/', authRequired, requireEnterprise, async (req, res) => {
   }
 });
 
-// POST /api/team/invite — invite a team member
-router.post('/invite', authRequired, requireEnterprise, requireAdmin, async (req, res) => {
+router.post('/invite', authRequired, async (req, res) => {
   try {
-    const { email, role = 'viewer', venueId } = req.body;
+    const supabase = getSupabase();
+    const { email, role = 'viewer' } = req.body;
     if (!email) return res.status(400).json({ error: 'Email required' });
     if (!['admin', 'viewer'].includes(role)) return res.status(400).json({ error: 'Role must be admin or viewer' });
-
-    // Check if already invited
-    const { data: existing } = await supabase
-      .from('team_members')
-      .select('id')
-      .eq('owner_id', req.user.id)
-      .eq('invited_email', email)
-      .single();
-
+    const ownerId = req.user.ownerId || req.user.userId;
+    const venueId = req.user.venueId || null;
+    const { data: owner } = await supabase.from('users').select('plan').eq('id', ownerId).single();
+    const plan = owner?.plan || 'starter';
+    if (plan === 'starter') return res.status(403).json({ error: 'Team members require Pro or Enterprise plan.', upgrade: true });
+    if (plan === 'pro') {
+      const { data: members } = await supabase.from('team_members').select('id').eq('owner_id', ownerId);
+      if (members && members.length >= 5) return res.status(403).json({ error: 'Pro plan allows up to 5 team members. Upgrade to Enterprise for unlimited.', upgrade: true });
+    }
+    const { data: existing } = await supabase.from('team_members').select('id').eq('owner_id', ownerId).eq('invited_email', email).maybeSingle();
     if (existing) return res.status(400).json({ error: 'This person has already been invited.' });
-
-    // Check if user exists
-    const { data: existingUser } = await supabase
-      .from('users')
-      .select('id')
-      .eq('email', email)
-      .single();
-
-    const { data, error } = await supabase
-      .from('team_members')
-      .insert({
-        owner_id: req.user.id,
-        member_id: existingUser?.id || null,
-        venue_id: venueId || null,
-        role,
-        invited_email: email,
-        status: existingUser ? 'active' : 'pending',
-      })
-      .select()
-      .single();
-
+    const inviteToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: existingUser } = await supabase.from('users').select('id').eq('email', email).maybeSingle();
+    const { data: member, error } = await supabase.from('team_members').insert({
+      owner_id: ownerId, member_id: existingUser?.id || null, venue_id: venueId,
+      role, invited_email: email, invite_token: inviteToken, invite_expires: expiresAt,
+      status: existingUser ? 'active' : 'pending', created_at: new Date().toISOString()
+    }).select().single();
     if (error) return res.status(500).json({ error: error.message });
-
-    // Log to audit trail
-    await getSupabase().from('audit_trail').insert({
-      user_id: req.user.id,
-      action: `Team Member Invited`,
-      description: `${email} invited as ${role}`,
-      platform: 'Team',
-      created_at: new Date(),
-    });
-
-    res.json({ success: true, member: data, message: `${email} invited as ${role}` });
+    await supabase.from('audit_trail').insert({ user_id: ownerId, action: 'Team Member Invited', description: `${email} invited as ${role}`, platform: 'Team', created_at: new Date().toISOString() });
+    const inviteLink = `${process.env.FRONTEND_URL}/login.html?invite=${inviteToken}&email=${encodeURIComponent(email)}`;
+    res.json({ success: true, member, inviteLink, message: `${email} invited as ${role}` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// PATCH /api/team/:id/role — change role
-router.patch('/:id/role', authRequired, requireEnterprise, requireAdmin, async (req, res) => {
+router.post('/accept', async (req, res) => {
   try {
+    const supabase = getSupabase();
+    const { invite_token, email, password, name } = req.body;
+    if (!invite_token) return res.status(400).json({ error: 'Invite token required' });
+    const { data: invite } = await supabase.from('team_members').select('*, owner:owner_id(id, email, plan)').eq('invite_token', invite_token).maybeSingle();
+    if (!invite) return res.status(400).json({ error: 'Invalid or expired invite link.' });
+    if (new Date(invite.invite_expires) < new Date()) return res.status(400).json({ error: 'This invite has expired.' });
+    let userId;
+    const { data: existingUser } = await supabase.from('users').select('id').eq('email', invite.invited_email).maybeSingle();
+    if (existingUser) {
+      userId = existingUser.id;
+    } else {
+      if (!password) return res.status(400).json({ error: 'Password required.' });
+      const bcrypt = require('bcryptjs');
+      const hash = await bcrypt.hash(password, 10);
+      const { data: newUser, error: createErr } = await supabase.from('users').insert({ email: invite.invited_email, password_hash: hash, name: name || '', plan: invite.owner?.plan || 'pro', status: 'active', created_at: new Date().toISOString() }).select().single();
+      if (createErr) return res.status(500).json({ error: createErr.message });
+      userId = newUser.id;
+    }
+    await supabase.from('team_members').update({ member_id: userId, status: 'active', invite_token: null }).eq('id', invite.id);
+    const token = jwt.sign({ userId, email: invite.invited_email, ownerId: invite.owner_id, venueId: invite.venue_id, role: invite.role }, AUTH_SECRET, { expiresIn: '30d' });
+    res.json({ success: true, token, user: { id: userId, email: invite.invited_email, name: name || '', plan: invite.owner?.plan, role: invite.role, ownerId: invite.owner_id, venueId: invite.venue_id } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/:id', authRequired, async (req, res) => {
+  try {
+    const supabase = getSupabase();
+    const ownerId = req.user.ownerId || req.user.userId;
+    const { error } = await supabase.from('team_members').delete().eq('id', req.params.id).eq('owner_id', ownerId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/:id/role', authRequired, async (req, res) => {
+  try {
+    const supabase = getSupabase();
     const { role } = req.body;
     if (!['admin', 'viewer'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
-
-    const { error } = await supabase
-      .from('team_members')
-      .update({ role })
-      .eq('id', req.params.id)
-      .eq('owner_id', req.user.id);
-
+    const ownerId = req.user.ownerId || req.user.userId;
+    const { error } = await supabase.from('team_members').update({ role }).eq('id', req.params.id).eq('owner_id', ownerId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
-// DELETE /api/team/:id — remove team member
-router.delete('/:id', authRequired, requireEnterprise, requireAdmin, async (req, res) => {
-  try {
-    const { error } = await supabase
-      .from('team_members')
-      .delete()
-      .eq('id', req.params.id)
-      .eq('owner_id', req.user.id);
-
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Middleware export — use in other routes to check viewer permissions
-function checkPermission(action) {
-  return async (req, res, next) => {
-    // Viewers can read, not write
-    const writeActions = ['POST', 'PUT', 'PATCH', 'DELETE'];
-    if (req.user.role === 'viewer' && writeActions.includes(req.method)) {
-      return res.status(403).json({ error: 'Viewers have read-only access. Contact your account admin to make changes.' });
-    }
-    next();
-  };
-}
 
 module.exports = router;
-module.exports.checkPermission = checkPermission;
-module.exports.requireAdmin = requireAdmin;

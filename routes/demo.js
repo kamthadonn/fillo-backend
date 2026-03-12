@@ -1,8 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const Anthropic = require('@anthropic-ai/sdk');
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 router.post('/generate', async (req, res) => {
   try {
@@ -13,6 +10,9 @@ router.post('/generate', async (req, res) => {
     const city = placeDetails?.formatted_address?.split(',')[1]?.trim()
       || venueAddress?.split(',')[0]?.trim() || '';
     const eventLabel = event || 'upcoming event';
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const prompt = `You are Fillo AI. Generate venue content as JSON only, no markdown:
 {
@@ -41,6 +41,6 @@ EVENT: ${eventLabel}`;
   }
 });
 
-router.get('/test', (req, res) => res.json({ success: true }));
+router.get('/test', (req, res) => res.json({ success: true, message: 'Demo route live' }));
 
 module.exports = router;

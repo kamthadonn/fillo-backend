@@ -35,7 +35,7 @@ cron.schedule('0 * * * *', async () => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n⚡ Fillo backend running on port ${PORT}`);
   console.log(`🌐 Visit: http://localhost:${PORT}`);
   console.log(`📡 Trends: http://localhost:${PORT}/api/trends`);

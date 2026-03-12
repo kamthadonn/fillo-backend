@@ -11,7 +11,7 @@ app.use(express.json());
 app.get('/', (req, res) => {
   res.json({
     status: 'Fillo backend is live ⚡',
-    version: '1.0.0-beta'
+    version: '2.0.0'
   });
 });
 

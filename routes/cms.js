@@ -6,7 +6,7 @@ const wp = require('../services/wordpress');
 const wf = require('../services/webflow');
 const { fireWebhook, getWebhookConfig, saveWebhookConfig } = require('../services/webhook');
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+function getSupabase() { return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); }
 
 function authRequired(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -102,7 +102,7 @@ router.post('/publish', authRequired, requirePro, async (req, res) => {
 
     // Log to audit trail
     if (result.success && result.auditEntry) {
-      await supabase.from('audit_trail').insert({
+      await getSupabase().from('audit_trail').insert({
         user_id: userId,
         action: result.auditEntry.action,
         description: result.auditEntry.desc,

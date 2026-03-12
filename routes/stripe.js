@@ -144,7 +144,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const passwordHash = await bcrypt.hash(tempPassword, 12);
         const token = crypto.randomBytes(32).toString('hex');
 
-        await supabase.from('users').insert([{
+        await getSupabase().from('users').insert([{
           email:                   customerEmail,
           password_hash:           passwordHash,
           token,

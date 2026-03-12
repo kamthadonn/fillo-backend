@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+function getSupabase() { return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); }
 
 function authRequired(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -70,7 +70,7 @@ router.get('/export', authRequired, async (req, res) => {
 router.post('/', authRequired, async (req, res) => {
   try {
     const { action, description, platform, url, pilot_mode } = req.body;
-    const { error } = await supabase.from('audit_trail').insert({
+    const { error } = await getSupabase().from('audit_trail').insert({
       user_id: req.user.id,
       action,
       description,

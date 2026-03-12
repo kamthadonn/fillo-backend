@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+function getSupabase() { return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); }
 
 function authRequired(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -85,7 +85,7 @@ router.post('/invite', authRequired, requireEnterprise, requireAdmin, async (req
     if (error) return res.status(500).json({ error: error.message });
 
     // Log to audit trail
-    await supabase.from('audit_trail').insert({
+    await getSupabase().from('audit_trail').insert({
       user_id: req.user.id,
       action: `Team Member Invited`,
       description: `${email} invited as ${role}`,

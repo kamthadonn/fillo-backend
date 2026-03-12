@@ -11,7 +11,7 @@ router.post('/setup', async (req, res) => {
     const data = req.body;
     if (!data.name) return res.status(400).json({ error: 'Venue name is required' });
     const supabase = getSupabase();
-    const { data: venue, error } = await supabase.from('venues').insert([{
+    const { data: venue, error } = await getSupabase().from('venues').insert([{
       name: data.name,
       city: data.city || '',
       state: data.state || '',
@@ -52,7 +52,7 @@ router.post('/setup', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const supabase = getSupabase();
-    const { data: venue, error } = await supabase.from('venues').select('*').eq('id', req.params.id).single();
+    const { data: venue, error } = await getSupabase().from('venues').select('*').eq('id', req.params.id).single();
     if (error) throw error;
     res.json(venue);
   } catch (err) {
@@ -63,7 +63,7 @@ router.get('/:id', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const supabase = getSupabase();
-    const { data: venues, error } = await supabase.from('venues').select('*').order('created_at', { ascending: false });
+    const { data: venues, error } = await getSupabase().from('venues').select('*').order('created_at', { ascending: false });
     if (error) throw error;
     res.json(venues);
   } catch (err) {

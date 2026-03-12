@@ -1,45 +1,46 @@
 const express = require('express');
 const router = express.Router();
-const { runFullScan } = require('../services/intelligence');
+const Anthropic = require('@anthropic-ai/sdk');
 
-// POST /api/demo/generate
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
 router.post('/generate', async (req, res) => {
   try {
-    const { venueName, venueAddress, placeDetails } = req.body;
-    if (!venueName) return res.status(400).json({ error: 'Venue name required' });
+    const { venue, event, venueName, venueAddress, placeDetails } = req.body;
+    const name = venueName || venue;
+    if (!name) return res.status(400).json({ error: 'Venue name required' });
 
     const city = placeDetails?.formatted_address?.split(',')[1]?.trim()
-      || venueAddress?.split(',')[0]?.trim()
-      || '';
+      || venueAddress?.split(',')[0]?.trim() || '';
+    const eventLabel = event || 'upcoming event';
 
-    const venueType = placeDetails?.types?.[0]?.replace(/_/g, ' ') || 'venue';
-    const keywords = [venueName, city ? `${city} nightlife` : 'nightlife', city ? `${city} events` : 'events'];
+    const prompt = `You are Fillo AI. Generate venue content as JSON only, no markdown:
+{
+  "banner": "<punchy hero headline, max 12 words>",
+  "social": "<Instagram caption, 2-3 sentences, emojis, 3 hashtags>",
+  "homepage": "<event blurb, 2 sentences, drives ticket clicks>",
+  "fomoScore": <number 60-95>,
+  "insight": "<one sentence on why this content will perform>"
+}
+VENUE: ${name}
+CITY: ${city || 'Unknown'}
+EVENT: ${eventLabel}`;
 
-    console.log(`🎯 Demo scan: ${venueName} | ${city} | ${venueType}`);
-
-    const result = await runFullScan({ venueName, venueType, city, keywords, placeDetails });
-    res.json(result);
-
-  } catch (err) {
-    console.error('Demo generate error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /api/demo/test
-router.get('/test', async (req, res) => {
-  try {
-    const { runFullScan } = require('../services/intelligence');
-    const result = await runFullScan({
-      venueName: 'Sekai Night Club',
-      venueType: 'nightclub',
-      city: 'Houston',
-      keywords: ['Houston nightlife', 'Houston EDM', 'bottle service Houston'],
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 600,
+      messages: [{ role: 'user', content: prompt }],
     });
-    res.json(result);
+
+    const raw = message.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const content = JSON.parse(raw);
+    res.json({ success: true, content });
   } catch (err) {
+    console.error('Demo error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
+router.get('/test', (req, res) => res.json({ success: true }));
 
 module.exports = router;

@@ -20,7 +20,7 @@ app.use('/api/cms', require('./routes/cms'));
 app.use('/api/onboarding', require('./routes/onboarding'));
 app.use('/api/stripe', require('./routes/stripe'));
 
-cron.schedule('0 * * * *', async () => {
+cron.schedule('0 2 * * *', async () => {
   console.log('⚡ Fillo auto-scan running...');
   try {
     const { scanTrends } = require('./services/googletrends');

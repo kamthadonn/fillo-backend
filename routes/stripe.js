@@ -25,7 +25,7 @@ const PRICES = {
   starter_yearly:     'price_1T9Zwk3eFtSO3FCMk3YDBdNr',
   pro_monthly:        'price_1T9ZtN3eFtSO3FCMCgpHLj5k',
   pro_yearly:         'price_1T9Zx93eFtSO3FCME3Vig4AD',
-  enterprise_monthly: 'price_1T9Ztp3eFtSO3FCMEum2rtep',
+  enterprise_monthly: 'price_1T9toc3eFtSO3FCM6r1vE6O3',
   enterprise_yearly:  'price_1T9Zxb3eFtSO3FCM4fCn8q9S',
   voucher_monthly:    'price_1T9ZvD3eFtSO3FCMTK0RGEsK',
   voucher_yearly:     'price_1T9Zv43eFtSO3FCM6K7FqFUR',

@@ -42,10 +42,10 @@ router.post('/setup', async (req, res) => {
 
     // Safe string converter — handles arrays, strings, null
     const toStr = v => {
-      if (!v) return '';
-      if (Array.isArray(v)) return v.filter(Boolean).join(', ');
+      if (!v) return null;
+      if (Array.isArray(v)) { const j = v.filter(Boolean).join(', '); return j || null; }
       if (typeof v === 'object') return JSON.stringify(v);
-      return String(v).trim();
+      const s = String(v).trim(); return s || null;
     };
 
     const { data: venue, error } = await supabase
@@ -94,7 +94,7 @@ router.post('/setup', async (req, res) => {
     // Does NOT generate drafts or save scans
     try {
       const { runDeepPull } = require('../services/deeppull');
-      const toStrSafe = v => { if (!v) return ''; if (Array.isArray(v)) return v.filter(Boolean).join(', '); return String(v); };
+      const toStrSafe = v => { if (!v) return null; if (Array.isArray(v)) return v.filter(Boolean).join(', '); return String(v); };
       const venueForPull = {
         ...venue,
         event_types: toStrSafe(data.eventTypes),

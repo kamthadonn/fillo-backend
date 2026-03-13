@@ -1,42 +1,153 @@
 const axios = require('axios');
 
-async function pushToWordPress(content) {
+// WordPress REST API auto-publish service
+// Requires venue to provide: siteUrl, wpUsername, wpAppPassword
+// App Passwords: WP Admin → Users → Profile → Application Passwords
+
+async function getClient(siteUrl, username, appPassword) {
+  const base = siteUrl.replace(/\/$/, '');
+  const token = Buffer.from(`${username}:${appPassword}`).toString('base64');
+  return {
+    base,
+    headers: {
+      'Authorization': `Basic ${token}`,
+      'Content-Type': 'application/json',
+    },
+  };
+}
+
+// Test connection — verify credentials work
+async function testConnection(siteUrl, username, appPassword) {
   try {
-    const { WP_SITE_URL, WP_USERNAME, WP_APP_PASSWORD } = process.env;
-
-    if (!WP_SITE_URL || !WP_USERNAME || !WP_APP_PASSWORD) {
-      console.log('WordPress credentials not set yet — skipping');
-      return null;
-    }
-
-    const credentials = Buffer.from(
-      `${WP_USERNAME}:${WP_APP_PASSWORD}`
-    ).toString('base64');const response = await axios.post(
-      `${WP_SITE_URL}/wp-json/wp/v2/posts`,
-      {
-        title: content.bannerHeadline,
-        content: `<div class="fillo-banner"><h1>${content.bannerHeadline}</h1><p>${content.homepageBlurb}</p><p>${content.ticketCopy}</p><a href="#tickets">GET TICKETS</a></div>`,
-        status: 'draft',
-        meta: {
-          fillo_generated: true,
-          fillo_timestamp: new Date().toISOString()
-        }
-      },
-      {
-        headers: {
-          Authorization: `Basic ${credentials}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    console.log('✅ WordPress draft created:', response.data.link);
-    return response.data;
-
-  } catch(err) {
-    console.error('WordPress error:', err.message);
-    return null;
+    const { base, headers } = await getClient(siteUrl, username, appPassword);
+    const res = await axios.get(`${base}/wp-json/wp/v2/users/me`, { headers, timeout: 8000 });
+    return {
+      success: true,
+      user: res.data.name,
+      roles: res.data.roles,
+      siteUrl: base,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err.response?.data?.message || err.message,
+    };
   }
 }
 
-module.exports = { pushToWordPress };
+// Create a new post
+async function createPost({ siteUrl, username, appPassword, title, content, status = 'draft', categories = [], tags = [], featuredImageUrl = null }) {
+  try {
+    const { base, headers } = await getClient(siteUrl, username, appPassword);
+
+    const body = {
+      title,
+      content,
+      status, // 'draft' | 'publish' | 'pending'
+      categories,
+      tags,
+    };
+
+    const res = await axios.post(`${base}/wp-json/wp/v2/posts`, body, { headers, timeout: 10000 });
+
+    return {
+      success: true,
+      postId: res.data.id,
+      url: res.data.link,
+      status: res.data.status,
+      title: res.data.title?.rendered,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: err.response?.data?.message || err.message,
+    };
+  }
+}
+
+// Update an existing post
+async function updatePost({ siteUrl, username, appPassword, postId, title, content, status }) {
+  try {
+    const { base, headers } = await getClient(siteUrl, username, appPassword);
+    const res = await axios.post(
+      `${base}/wp-json/wp/v2/posts/${postId}`,
+      { title, content, status },
+      { headers, timeout: 10000 }
+    );
+    return { success: true, postId: res.data.id, url: res.data.link, status: res.data.status };
+  } catch (err) {
+    return { success: false, error: err.response?.data?.message || err.message };
+  }
+}
+
+// Get recent posts — for Performance Pulse
+async function getRecentPosts(siteUrl, username, appPassword, limit = 10) {
+  try {
+    const { base, headers } = await getClient(siteUrl, username, appPassword);
+    const res = await axios.get(`${base}/wp-json/wp/v2/posts?per_page=${limit}&orderby=date&order=desc`, {
+      headers,
+      timeout: 8000,
+    });
+    return res.data.map(p => ({
+      id: p.id,
+      title: p.title?.rendered,
+      url: p.link,
+      status: p.status,
+      date: p.date,
+      modified: p.modified,
+    }));
+  } catch (err) {
+    console.error('WP getRecentPosts error:', err.message);
+    return [];
+  }
+}
+
+// Main publish function — respects Pilot Mode
+// pilotMode: 'auto' = publish immediately, 'suggest' = save as draft, 'off' = skip
+async function publishContent({ siteUrl, username, appPassword, pilotMode = 'suggest', draft }) {
+  if (pilotMode === 'off') {
+    return { success: false, skipped: true, reason: 'Pilot Mode is OFF for this content type' };
+  }
+
+  const status = pilotMode === 'auto' ? 'publish' : 'draft';
+
+  const result = await createPost({
+    siteUrl,
+    username,
+    appPassword,
+    title: draft.title || 'Fillo Generated Post',
+    content: formatContent(draft),
+    status,
+  });
+
+  return {
+    ...result,
+    pilotMode,
+    action: status === 'publish' ? 'Published live' : 'Saved as draft — awaiting approval',
+    auditEntry: {
+      action: status === 'publish' ? 'Auto-published to WordPress' : 'Draft saved to WordPress',
+      desc: `"${draft.title}" · Pilot Mode: ${pilotMode} · Status: ${status}`,
+      platform: 'WordPress',
+      url: result.url || null,
+    },
+  };
+}
+
+// Format Fillo draft into WordPress HTML content
+function formatContent(draft) {
+  const lines = [];
+
+  if (draft.intro) lines.push(`<p>${draft.intro}</p>`);
+  if (draft.body) lines.push(`<p>${draft.body}</p>`);
+  if (draft.cta) lines.push(`<p><strong>${draft.cta}</strong></p>`);
+
+  // Fallback — just use the raw content
+  if (!lines.length && draft.content) lines.push(`<p>${draft.content}</p>`);
+  if (!lines.length && draft.text) lines.push(`<p>${draft.text}</p>`);
+
+  lines.push(`<p><em>Content generated by Fillo AI · fillo.tech</em></p>`);
+
+  return lines.join('\n');
+}
+
+module.exports = { testConnection, createPost, updatePost, getRecentPosts, publishContent };

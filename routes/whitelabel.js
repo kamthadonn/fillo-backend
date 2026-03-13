@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
-function getSupabase() { return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); }
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 function authRequired(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -22,7 +22,7 @@ function requireEnterprise(req, res, next) {
   next();
 }
 
-// GET /api/whitelabel — get white label config
+// GET /api/whitelabel
 router.get('/', authRequired, requireEnterprise, async (req, res) => {
   try {
     const { data } = await supabase
@@ -36,7 +36,7 @@ router.get('/', authRequired, requireEnterprise, async (req, res) => {
   }
 });
 
-// POST /api/whitelabel — save white label config
+// POST /api/whitelabel
 router.post('/', authRequired, requireEnterprise, async (req, res) => {
   try {
     const config = {
@@ -57,11 +57,10 @@ router.post('/', authRequired, requireEnterprise, async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
 
-    // Log to audit trail
-    await getSupabase().from('audit_trail').insert({
+    await supabase.from('audit_trail').insert({
       user_id: req.user.id,
       action: 'White Label Updated',
-      description: `Brand: ${config.brandName} · Color: ${config.primaryColor} · Subdomain: ${config.subdomain || 'none'}`,
+      description: `Brand: ${config.brandName} · Color: ${config.primaryColor}`,
       platform: 'Settings',
       created_at: new Date(),
     });
@@ -72,8 +71,7 @@ router.post('/', authRequired, requireEnterprise, async (req, res) => {
   }
 });
 
-// GET /api/whitelabel/resolve — resolve white label by subdomain
-// Used by dashboard on load to check if white label applies
+// GET /api/whitelabel/resolve/:subdomain
 router.get('/resolve/:subdomain', async (req, res) => {
   try {
     const subdomain = req.params.subdomain?.toLowerCase();

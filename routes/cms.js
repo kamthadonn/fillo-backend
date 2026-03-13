@@ -6,7 +6,7 @@ const wp = require('../services/wordpress');
 const wf = require('../services/webflow');
 const { fireWebhook, getWebhookConfig, saveWebhookConfig } = require('../services/webhook');
 
-function getSupabase() { return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); }
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 function authRequired(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -19,7 +19,6 @@ function authRequired(req, res, next) {
   }
 }
 
-// Check plan allows CMS (Pro+)
 function requirePro(req, res, next) {
   const plan = req.user?.plan || 'starter';
   if (plan === 'starter') {
@@ -31,38 +30,33 @@ function requirePro(req, res, next) {
   next();
 }
 
-// GET /api/cms/test — test CMS connection for a venue
 router.post('/test', authRequired, requirePro, async (req, res) => {
   try {
     const { cmsType, siteUrl, username, appPassword, apiToken } = req.body;
-
     if (cmsType === 'wordpress') {
       const result = await wp.testConnection(siteUrl, username, appPassword);
       return res.json(result);
     }
-
     if (cmsType === 'webflow') {
       const result = await wf.testConnection(apiToken);
       return res.json(result);
     }
-
     res.status(400).json({ error: 'cmsType must be wordpress or webflow' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/cms/publish — publish a draft to CMS
 router.post('/publish', authRequired, requirePro, async (req, res) => {
   try {
     const { cmsType, draft, pilotMode } = req.body;
     const userId = req.user.id;
 
-    // Get venue CMS credentials from Supabase
     const { data: venue } = await supabase
       .from('venues')
-      .select('cms_type, cms_site_url, cms_username, cms_app_password, cms_api_token, cms_collection_id, pilot_mode')
+      .select('cms_type, cms_site_url, cms_username, cms_app_password, cms_api_token, cms_collection_id, pilot_mode, webhook_url, webhook_secret, id')
       .eq('user_id', userId)
+      .eq('is_active', true)
       .single();
 
     if (!venue) return res.status(404).json({ error: 'Venue not found. Complete onboarding first.' });
@@ -88,21 +82,20 @@ router.post('/publish', authRequired, requirePro, async (req, res) => {
         draft,
       });
     } else if (venue.webhook_url) {
-      const config = await getWebhookConfig(venueId || venue.id);
+      const config = await getWebhookConfig(venue.id);
       result = await fireWebhook({
         webhookUrl: config.webhook_url,
         webhookSecret: config.webhook_secret,
         draft,
         pilotMode: effectivePilotMode,
-        venueId,
+        venueId: venue.id,
       });
     } else {
       return res.status(400).json({ error: 'No CMS configured for this venue. Add CMS credentials in settings.' });
     }
 
-    // Log to audit trail
     if (result.success && result.auditEntry) {
-      await getSupabase().from('audit_trail').insert({
+      await supabase.from('audit_trail').insert({
         user_id: userId,
         action: result.auditEntry.action,
         description: result.auditEntry.desc,
@@ -119,13 +112,11 @@ router.post('/publish', authRequired, requirePro, async (req, res) => {
   }
 });
 
-// POST /api/cms/credentials — save CMS credentials for a venue
 router.post('/credentials', authRequired, requirePro, async (req, res) => {
   try {
     const { cmsType, siteUrl, username, appPassword, apiToken, collectionId } = req.body;
     const userId = req.user.id;
 
-    // Test connection first
     let testResult;
     if (cmsType === 'wordpress') {
       testResult = await wp.testConnection(siteUrl, username, appPassword);
@@ -137,7 +128,6 @@ router.post('/credentials', authRequired, requirePro, async (req, res) => {
       return res.status(400).json({ error: `CMS connection failed: ${testResult?.error}` });
     }
 
-    // Save to venues table
     const { error } = await supabase
       .from('venues')
       .update({
@@ -153,20 +143,19 @@ router.post('/credentials', authRequired, requirePro, async (req, res) => {
       .eq('user_id', userId);
 
     if (error) return res.status(500).json({ error: error.message });
-
     res.json({ success: true, message: `${cmsType} connected successfully.`, user: testResult.user });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/cms/posts — get recent posts from connected CMS
 router.get('/posts', authRequired, requirePro, async (req, res) => {
   try {
     const { data: venue } = await supabase
       .from('venues')
-      .select('cms_type, cms_site_url, cms_username, cms_app_password')
+      .select('cms_type, cms_site_url, cms_username, cms_app_password, cms_connected')
       .eq('user_id', req.user.id)
+      .eq('is_active', true)
       .single();
 
     if (!venue?.cms_connected) return res.json({ posts: [], connected: false });
@@ -182,12 +171,10 @@ router.get('/posts', authRequired, requirePro, async (req, res) => {
   }
 });
 
-// POST /api/cms/webhook — save webhook config
 router.post('/webhook', authRequired, requirePro, async (req, res) => {
   try {
-    const { webhookUrl, webhookSecret } = req.body;
+    const { webhookUrl, webhookSecret, venueId } = req.body;
     if (!webhookUrl) return res.status(400).json({ error: 'webhookUrl required' });
-    const venueId = req.body.venueId;
     const success = await saveWebhookConfig(venueId, { webhookUrl, webhookSecret });
     res.json({ success });
   } catch (err) {

@@ -1,25 +1,22 @@
 const { createClient } = require('@supabase/supabase-js');
-function getSupabase() { return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); }
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// Default brand voice template
 const DEFAULT_VOICE = {
-  tone: 'energetic',           // energetic | professional | casual | luxury | hype | friendly
-  style: 'punchy',             // punchy | descriptive | minimal | storytelling
-  emoji: true,                 // use emojis in content
-  capsUsage: 'moderate',       // none | moderate | heavy (ALL CAPS usage)
-  hashtagStyle: 'selective',   // none | selective | heavy
-  ctaStyle: 'urgent',          // urgent | soft | none
-  avoidWords: [],              // words to never use
-  mustInclude: [],             // words/phrases to always include
-  signOff: '',                 // e.g. "See you on the floor 🔥"
-  customInstructions: '',      // free text for Claude
+  tone: 'energetic',
+  style: 'punchy',
+  emoji: true,
+  capsUsage: 'moderate',
+  hashtagStyle: 'selective',
+  ctaStyle: 'urgent',
+  avoidWords: [],
+  mustInclude: [],
+  signOff: '',
+  customInstructions: '',
 };
 
-// Build brand voice prompt string for Claude
 function buildVoicePrompt(voice = {}) {
   const v = { ...DEFAULT_VOICE, ...voice };
   const lines = [];
-
   lines.push(`BRAND VOICE REQUIREMENTS:`);
   lines.push(`- Tone: ${v.tone} (${getToneDesc(v.tone)})`);
   lines.push(`- Style: ${v.style} (${getStyleDesc(v.style)})`);
@@ -31,7 +28,6 @@ function buildVoicePrompt(voice = {}) {
   if (v.mustInclude?.length) lines.push(`- Always include: ${v.mustInclude.join(', ')}`);
   if (v.signOff) lines.push(`- Sign off with: "${v.signOff}"`);
   if (v.customInstructions) lines.push(`- Additional: ${v.customInstructions}`);
-
   return lines.join('\n');
 }
 
@@ -57,7 +53,6 @@ function getStyleDesc(style) {
   return map[style] || style;
 }
 
-// Get brand voice for a venue
 async function getVoice(venueId) {
   try {
     const { data } = await supabase
@@ -71,7 +66,6 @@ async function getVoice(venueId) {
   }
 }
 
-// Save brand voice for a venue
 async function saveVoice(venueId, voice) {
   const { error } = await supabase
     .from('venues')

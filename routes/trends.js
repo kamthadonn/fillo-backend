@@ -1,59 +1,53 @@
 const express = require('express');
 const router = express.Router();
-const { scanTrends } = require('../services/googletrends');
-const { scanReddit } = require('../services/reddit');
-const { generateContent } = require('../services/claude');
+const { scanTrends, getDailyTrends, getRelatedQueries } = require('../services/googletrends');
+const { runFullScan } = require('../services/intelligence');
 
+// GET /api/trends — daily trending topics in the US
 router.get('/', async (req, res) => {
   try {
-    const keywords = req.query.keywords
-      ? req.query.keywords.split(',')
-      : [];
-
-    const [trends, reddit] = await Promise.all([
-      scanTrends(keywords),
-      scanReddit(keywords)
-    ]);
-
-    res.json({
-      success: true,
-      trends,
-      reddit,
-      timestamp: new Date().toISOString()
-    });
-  } catch(err) {
-    res.status(500).json({ success: false, error: err.message });
+    const geo = req.query.geo || 'US';
+    const daily = await getDailyTrends(geo);
+    res.json({ success: true, trends: daily, geo });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-});router.post('/generate', async (req, res) => {
+});
+
+// GET /api/trends/scan?keywords=houston+nightlife,edm+houston&geo=US
+router.get('/scan', async (req, res) => {
   try {
-    const { venue, event, keywords } = req.body;
+    const keywords = req.query.keywords?.split(',') || ['nightlife', 'events'];
+    const geo = req.query.geo || 'US';
+    const results = await scanTrends(keywords, geo);
+    res.json({ success: true, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    if (!venue || !event) {
-      return res.status(400).json({
-        success: false,
-        error: 'venue and event are required'
-      });
-    }
+// GET /api/trends/related?keyword=houston+nightlife
+router.get('/related', async (req, res) => {
+  try {
+    const keyword = req.query.keyword || 'nightlife';
+    const geo = req.query.geo || 'US';
+    const results = await getRelatedQueries(keyword, geo);
+    res.json({ success: true, keyword, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    const [trends, reddit] = await Promise.all([
-      scanTrends(keywords || [event, venue]),
-      scanReddit(keywords || [event, venue])
-    ]);
-
-    const content = await generateContent(venue, event, trends, reddit);
-
-    res.json({
-      success: true,
-      venue,
-      event,
-      trends,
-      reddit,
-      content,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch(err) {
-    res.status(500).json({ success: false, error: err.message });
+// POST /api/trends/generate — full intelligence scan
+router.post('/generate', async (req, res) => {
+  try {
+    const { venueName, venueType, city, keywords, genres, competitors, eventTypes, busiestNights, capacity, venueAddress, venueBusinessType, venueId } = req.body;
+    if (!venueName) return res.status(400).json({ error: 'venueName required' });
+    const allKeywords = [...(keywords || []), ...(genres || [])].filter(Boolean);
+    const result = await runFullScan({ venueName, venueType, city, keywords: allKeywords, genres, competitors, eventTypes, busiestNights, capacity, venueAddress, venueBusinessType, venueId });
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

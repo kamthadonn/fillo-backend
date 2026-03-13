@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { checkXAccess, trackUsage } = require('./xusage');
 
 const BEARER = process.env.X_BEARER_TOKEN;
 
@@ -7,7 +8,6 @@ const headers = {
   'User-Agent': 'FilloApp/1.0',
 };
 
-// Search recent tweets for a keyword
 async function searchTweets(query, maxResults = 10) {
   try {
     const res = await axios.get('https://api.twitter.com/2/tweets/search/recent', {
@@ -36,11 +36,16 @@ async function searchTweets(query, maxResults = 10) {
   }
 }
 
-// Get trending signals for a venue
-async function getXSignals(keywords = [], city = '', venueType = '') {
+async function getXSignals(keywords = [], city = '', venueType = '', userId = null, plan = 'starter') {
   if (!BEARER) {
     console.warn('X_BEARER_TOKEN not set — skipping X signals');
     return [];
+  }
+
+  const access = await checkXAccess(userId, plan, 30);
+  if (!access.allowed) {
+    console.warn(`X access denied for user ${userId}: ${access.reason}`);
+    return [{ blocked: true, reason: access.reason, canBuyOverage: access.canBuyOverage || false }];
   }
 
   const results = [];
@@ -74,6 +79,9 @@ async function getXSignals(keywords = [], city = '', venueType = '') {
       console.error(`X signal error for "${query}":`, err.message);
     }
   }
+
+  const totalFetched = results.length * 10;
+  if (userId && totalFetched > 0) await trackUsage(userId, plan, totalFetched);
 
   return results.sort((a, b) => b.score - a.score);
 }

@@ -6,7 +6,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/', (req, res) => res.json({ status: 'Fillo backend is live ⚡', version': '2.1.1'' }));
 
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/demo',          require('./routes/demo'));

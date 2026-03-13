@@ -30,6 +30,13 @@ router.post('/setup', async (req, res) => {
 
     const supabase = getSupabase();
     const userId = getUserIdFromReq(req);
+    const toArr = v => {
+      if (!v) return null;
+      if (Array.isArray(v)) { const a = v.map(s=>String(s).trim()).filter(Boolean); return a.length ? a : null; }
+      if (typeof v === 'string') { const a = v.split(',').map(s=>s.trim()).filter(Boolean); return a.length ? a : null; }
+      return null;
+    };
+    const toText = v => { if (!v) return null; const s = String(v).trim(); return s || null; };
 
     // If we have a userId, deactivate their existing active venue first
     if (userId) {

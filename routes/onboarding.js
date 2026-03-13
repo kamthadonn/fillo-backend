@@ -90,10 +90,10 @@ router.post('/setup', async (req, res) => {
       const { runDeepPull } = require('../services/deeppull');
       const venueForPull = {
         ...venue,
-        event_types: data.eventTypes,
-        genres: data.genres?.join(', '),
-        competitors: data.competitors?.join(', '),
-        keywords: data.customKeywords?.join(', ')
+        event_types: Array.isArray(data.eventTypes) ? data.eventTypes.filter(Boolean).join(', ') : (data.eventTypes || ''),
+        genres: Array.isArray(data.genres) ? data.genres.filter(Boolean).join(', ') : (data.genres || ''),
+        competitors: Array.isArray(data.competitors) ? data.competitors.filter(Boolean).join(', ') : (data.competitors || ''),
+        keywords: Array.isArray(data.customKeywords) ? data.customKeywords.filter(Boolean).join(', ') : (data.customKeywords || '')
       };
       runDeepPull(venueForPull)
         .then(r => console.log(`✅ [DeepPull] Done for ${venue.name} — ${r.signalCount} signals`))

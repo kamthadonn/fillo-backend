@@ -8,6 +8,7 @@ async function getTrendScore(keyword, geo = 'US') {
       geo,
       startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
     });
+    if (typeof data !== 'string' || data.trim().startsWith('<')) { console.warn('[Trends] Google blocked'); return []; }
     const parsed = JSON.parse(data);
     const timeline = parsed?.default?.timelineData || [];
     if (!timeline.length) return { keyword, score: 0, delta: 0, hot: false };

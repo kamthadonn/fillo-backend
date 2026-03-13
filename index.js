@@ -7,7 +7,29 @@ const rateLimit  = require('express-rate-limit');
 const app = express();
 app.set('trust proxy', 1);
 
-app.use(cors());
+const ALLOWED_ORIGINS = [
+  'https://fillo.tech',
+  'https://www.fillo.tech',
+  'http://localhost:3000',
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, Postman, Railway health checks)
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    console.warn('[CORS] Blocked origin:', origin);
+    callback(new Error('CORS: origin not allowed — ' + origin));
+  },
+  methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature'],
+  credentials: true,
+}));
+
+// Handle preflight for all routes
+app.options('*', cors());
 
 // ── CRITICAL: Stripe webhook needs raw body BEFORE express.json() ──
 // Mount webhook route first with raw body parser
@@ -29,25 +51,45 @@ app.use('/api/intelligence', scanLimiter);
 app.get('/', (req, res) => res.json({ status: 'Fillo backend is live ⚡', version: '2.1.1' }));
 
 
+// Safe route loader — if a route file is missing, log a warning instead of crashing
+function safeRoute(path) {
+  try {
+    const route = require(path);
+    if (typeof route !== 'function' && typeof route.handle !== 'function') {
+      console.warn(`[Routes] ${path} did not export a valid router — skipping`);
+      return null;
+    }
+    return route;
+  } catch (e) {
+    console.warn(`[Routes] Could not load ${path}: ${e.message}`);
+    return null;
+  }
+}
+function useRoute(app, prefix, path) {
+  const r = safeRoute(path);
+  if (r) app.use(prefix, r);
+  else    console.warn(`[Routes] Skipping ${prefix} — route file not found or invalid`);
+}
+
 // Routes
-app.use('/api/auth',          require('./routes/auth'));
-app.use('/api/demo',          require('./routes/demo'));
-app.use('/api/trends',        require('./routes/trends'));
-app.use('/api/cms',           require('./routes/cms'));
-app.use('/api/onboarding',    require('./routes/onboarding'));
-app.use('/api/stripe',        require('./routes/stripe'));
-app.use('/api/places',        require('./routes/places'));
-app.use('/api/searchconsole', require('./routes/searchconsole'));
-app.use('/api/venues',        require('./routes/venues'));
-app.use('/api/audit',         require('./routes/audit'));
-app.use('/api/team',          require('./routes/team'));
-app.use('/api/report',        require('./routes/report'));
-app.use('/api/whitelabel',    require('./routes/whitelabel'));
-app.use('/api/scans',         require('./routes/scans'));
-app.use('/api/spotlight',     require('./routes/spotlight'));
-app.use('/api/intelligence',  require('./routes/intelligence_learn'));
-app.use('/api/drafts',        require('./routes/drafts'));
-app.use('/api/x',             require('./routes/x'));
+useRoute(app, '/api/auth',          './routes/auth');
+useRoute(app, '/api/demo',          './routes/demo');
+useRoute(app, '/api/trends',        './routes/trends');
+useRoute(app, '/api/cms',           './routes/cms');
+useRoute(app, '/api/onboarding',    './routes/onboarding');
+useRoute(app, '/api/stripe',        './routes/stripe');
+useRoute(app, '/api/places',        './routes/places');
+useRoute(app, '/api/searchconsole', './routes/searchconsole');
+useRoute(app, '/api/venues',        './routes/venues');
+useRoute(app, '/api/audit',         './routes/audit');
+useRoute(app, '/api/team',          './routes/team');
+useRoute(app, '/api/report',        './routes/report');
+useRoute(app, '/api/whitelabel',    './routes/whitelabel');
+useRoute(app, '/api/scans',         './routes/scans');
+useRoute(app, '/api/spotlight',     './routes/spotlight');
+useRoute(app, '/api/intelligence',  './routes/intelligence_learn');
+useRoute(app, '/api/drafts',        './routes/drafts');
+useRoute(app, '/api/x',             './routes/x');
 
 // Hourly auto-scan
 // ── 24/7 INTELLIGENCE ENGINE ─────────────────────────────────────────

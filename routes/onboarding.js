@@ -40,7 +40,7 @@ router.post('/setup', async (req, res) => {
         .eq('is_active', true);
     }
 
-    const toStr = v => Array.isArray(v) ? v.join(', ') : (v || '');
+    const toStr = v => { if (!v) return ''; if (Array.isArray(v)) return v.filter(Boolean).join(', '); return String(v); };
 
     const { data: venue, error } = await supabase
       .from('venues')

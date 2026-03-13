@@ -285,7 +285,7 @@ router.post('/', authRequired, enterpriseOnly, async (req, res) => {
     let venueIntel = null;
     try {
       const { getVenueIntelligence } = require('../services/deeppull');
-      venueIntel = await getVenueIntelligence(venue_id);
+      venueIntel = await getVenueIntelligence(venue_id, req.user.userId);
       if (venueIntel) console.log(`[Spotlight] Loaded venue intel for ${venueName} (${venueIntel.signal_count} signals)`);
     } catch(e) { console.warn('[Spotlight] Could not load venue intel:', e.message); }
 
@@ -293,7 +293,7 @@ router.post('/', authRequired, enterpriseOnly, async (req, res) => {
     if (venueIntel) {
       try {
         const cs = typeof venueIntel.content_strategy === 'string' ? JSON.parse(venueIntel.content_strategy) : (venueIntel.content_strategy || {});
-        genres = [...genres, ...(venueIntel.top_keywords?.split(', ').slice(0, 3) || [])];
+        const extraKeywords = venueIntel.top_keywords?.split(', ').slice(0, 3) || []; genres.push(...extraKeywords);
       } catch {}
     }
 

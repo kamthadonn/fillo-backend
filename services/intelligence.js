@@ -1,9 +1,24 @@
 const { scanTrends } = require('./googletrends');
 const { getXSignals } = require('./twitter');
 const { getInstagramSignals } = require('./instagram');
+const { getNewsSignals } = require('./newssignals');
+const { getWeatherSignals } = require('./weathersignals');
+const { getEventbriteSignals } = require('./eventbritesignals');
+const { getYelpSignals } = require('./yelpsignals');
 const { scanSearchConsole } = require('./searchconsole');
 const { buildVoicePrompt } = require('./brandvoice');
 const { checkBlackout } = require('./blackout');
+
+// Safe wrapper: any signal source can fail — scan always completes
+async function safeSignal(name, fn) {
+  try {
+    const result = await fn();
+    return result;
+  } catch (err) {
+    console.warn(`[Signal:${name}] Skipped:`, err.message);
+    return [];
+  }
+}
 const axios = require('axios');
 const Anthropic = require('@anthropic-ai/sdk');
 
@@ -11,37 +26,14 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── GOOGLE TRENDS ───────────────────────────────────────────────────────────
 async function getTrends(keywords = [], geo = 'US') {
-  const results = [];
+  // Google Trends is blocked server-side — using Reddit-powered scoring
   try {
-    for (const keyword of keywords.slice(0, 3)) {
-      try {
-        const data = await googleTrends.interestOverTime({
-          keyword,
-          geo,
-          startTime: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // last 7 days
-        });
-        const parsed = JSON.parse(data);
-        const timeline = parsed?.default?.timelineData || [];
-        const recent = timeline.slice(-3).map(t => t.value[0]);
-        const avg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 0;
-        const prev = timeline.slice(-6, -3).map(t => t.value[0]);
-        const prevAvg = prev.length ? prev.reduce((a, b) => a + b, 0) / prev.length : 0;
-        const delta = prevAvg > 0 ? ((avg - prevAvg) / prevAvg) * 100 : 0;
-        results.push({
-          keyword,
-          score: Math.round(avg),
-          delta: Math.round(delta),
-          hot: avg > 60 || delta > 30,
-          source: 'Google Trends',
-        });
-      } catch (e) {
-        console.error(`Trends error for "${keyword}":`, e.message);
-      }
-    }
-  } catch (e) {
-    console.error('Google Trends error:', e.message);
+    const result = await scanTrends(keywords, geo);
+    return result.keywords || [];
+  } catch(e) {
+    console.warn('[Trends] Reddit scan failed:', e.message);
+    return [];
   }
-  return results;
 }
 
 // ─── REDDIT ──────────────────────────────────────────────────────────────────
@@ -108,10 +100,14 @@ async function getRedditSignals(keywords = [], city = '', venueBusinessType = 't
 }
 
 // ─── CLAUDE INTELLIGENCE ─────────────────────────────────────────────────────
-async function generateIntelligence({ venueName, venueType, city, keywords, genres, competitors, eventTypes, busiestNights, capacity, venueBusinessType, trends, dailyTrends, redditSignals, xSignals, instagramSignals, searchConsoleData, placeDetails, brandVoice }) {
+async function generateIntelligence({ venueName, venueType, city, keywords, genres, competitors, eventTypes, busiestNights, capacity, venueBusinessType, trends, dailyTrends, redditSignals, xSignals, instagramSignals, newsSignals, weatherData, eventbriteSignals, yelpSignals, searchConsoleData, placeDetails, brandVoice, venueId, userId }) {
   try {
     const trendsText = trends.map(t => `- "${t.keyword}": score ${t.score}, ${t.delta > 0 ? '+' + t.delta : t.delta}% vs last week, ${t.hot ? 'HOT' : 'stable'}`).join('\n');
     const redditText = redditSignals.slice(0, 4).map(r => `- r/${r.subreddit}: "${r.topic}" — ${r.upvotes} upvotes, ${r.comments} comments`).join('\n');
+    const newsText = (newsSignals || []).slice(0, 3).map(n => `- "${n.headline}" (score: ${n.score})`).join('\n');
+    const weatherText = weatherData?.available ? `Weekend signal: ${weatherData.weekendSignal}` : 'Weather data not available';
+    const eventbriteText = (eventbriteSignals || []).filter(e => !e.status).slice(0, 3).map(e => `- "${e.name}" — ${e.signal}`).join('\n');
+    const yelpText = (yelpSignals || []).filter(e => !e.status).slice(0, 3).map(y => `- ${y.name}: ${y.signal}`).join('\n');
     const xText = (xSignals || []).slice(0, 3).map(x => `- "${x.topic}": score ${x.score}, ${x.signal}${x.topTweet ? ', top tweet: "' + x.topTweet + '"' : ''}`).join('\n');
     const placeInfo = placeDetails ? `Rating: ${placeDetails.rating}/5 (${placeDetails.user_ratings_total} reviews), Types: ${placeDetails.types?.slice(0,3).join(', ')}` : '';
 
@@ -121,7 +117,7 @@ async function generateIntelligence({ venueName, venueType, city, keywords, genr
     if (venueId) {
       try {
         const { getVenueIntelligence } = require('./deeppull');
-        const intel = await getVenueIntelligence(venueId);
+        const intel = await getVenueIntelligence(venueId, userId);
         if (intel) {
           const strategy = (() => { try { return typeof intel.content_strategy === 'string' ? JSON.parse(intel.content_strategy) : (intel.content_strategy || {}); } catch { return {}; } })();
           const patterns = (() => { try { return JSON.parse(intel.learned_patterns || '{}'); } catch { return {}; } })();
@@ -176,6 +172,18 @@ ${(dailyTrends || []).slice(0,3).map(t => `- "${t.topic}": ${t.traffic} searches
 LIVE REDDIT SIGNALS:
 ${redditText || 'No Reddit data available'}
 
+NEWS SIGNALS (trending news relevant to this market):
+${newsText || 'No news data available'}
+
+WEATHER INTELLIGENCE (weekend forecast for ${city}):
+${weatherText}
+
+TRENDING EVENTS IN MARKET (Eventbrite):
+${eventbriteText || 'No Eventbrite data — add key to enable'}
+
+COMPETITOR REVIEW SIGNALS (Yelp):
+${yelpText || 'No Yelp data — add YELP_API_KEY to enable'}
+
 LIVE X (TWITTER) SIGNALS:
 ${xText || 'No X data available'}
 
@@ -223,7 +231,7 @@ Generate a JSON intelligence report. Respond ONLY with valid JSON, no markdown:
 }
 
 // ─── FULL SCAN ────────────────────────────────────────────────────────────────
-async function runFullScan({ venueName, venueType, city, keywords, genres, competitors, eventTypes, busiestNights, capacity, venueAddress, venueBusinessType, placeDetails, siteUrl, venueId, brandVoice, pilotMode }) {
+async function runFullScan({ venueName, venueType, city, keywords, genres, competitors, eventTypes, busiestNights, capacity, venueAddress, venueBusinessType, placeDetails, siteUrl, venueId, brandVoice, pilotMode, userId, plan }) {
   console.log(`🔍 Running full intelligence scan for: ${venueName}`);
 
   // Check blackout window before running
@@ -254,29 +262,50 @@ async function runFullScan({ venueName, venueType, city, keywords, genres, compe
   console.log(`🏆 Competitors: ${(competitors||[]).join(', ') || 'none'}`);
   console.log(`🎵 Genres: ${(genres||[]).join(', ') || 'none'}`);
 
-  const [trendsData, redditSignals, xSignals, instagramSignals, searchConsoleData] = await Promise.all([
-    scanTrends(searchKeywords, geo),
-    getRedditSignals(searchKeywords, city, venueBusinessType),
-    getXSignals(searchKeywords, city, venueType),
-    getInstagramSignals(searchKeywords, city, venueType, venueName),
-    siteUrl ? scanSearchConsole(siteUrl) : Promise.resolve(null),
+  const [
+    trendsData,
+    redditSignals,
+    xSignals,
+    instagramSignals,
+    newsSignals,
+    weatherData,
+    eventbriteSignals,
+    yelpSignals,
+    searchConsoleData,
+  ] = await Promise.all([
+    safeSignal('Trends',     () => scanTrends(searchKeywords, geo)),
+    safeSignal('Reddit',     () => getRedditSignals(searchKeywords, city, venueBusinessType)),
+    safeSignal('X',          () => getXSignals(searchKeywords, city, venueType)),
+    safeSignal('Instagram',  () => getInstagramSignals(searchKeywords, city, venueType, venueName, venueBusinessType)),
+    safeSignal('News',       () => getNewsSignals(searchKeywords, city, venueBusinessType)),
+    safeSignal('Weather',    () => getWeatherSignals(city)),
+    safeSignal('Eventbrite', () => getEventbriteSignals(city, searchKeywords, venueBusinessType)),
+    safeSignal('Yelp',       () => getYelpSignals(competitors, city, venueType, venueBusinessType)),
+    siteUrl ? safeSignal('SearchConsole', () => scanSearchConsole(siteUrl)) : Promise.resolve(null),
   ]);
 
   const trends = trendsData.keywords || [];
   const dailyTrends = trendsData.daily || [];
 
-  console.log(`✅ Trends: ${trends.length}, Reddit: ${redditSignals.length}, X: ${xSignals.length}, Instagram: ${instagramSignals.length}, SearchConsole: ${searchConsoleData ? 'yes' : 'no'}`);
+  const trendsSource = trendsData?.source || 'Reddit';
+  console.log(`✅ Trends(${trendsSource}): ${trends.length}, Reddit: ${redditSignals.length}, X: ${xSignals.length}, Instagram: ${instagramSignals.length}, News: ${newsSignals.length}, Weather: ${weatherData?.available ? 'yes' : 'no'}, Eventbrite: ${eventbriteSignals.length}, Yelp: ${yelpSignals.length}`);
 
   const intelligence = await generateIntelligence({
     venueName, venueType, city, keywords: searchKeywords,
     genres, competitors, eventTypes, busiestNights, capacity, venueBusinessType,
-    trends, dailyTrends, redditSignals, xSignals, instagramSignals, searchConsoleData, placeDetails, brandVoice,
+    trends, dailyTrends, redditSignals, xSignals, instagramSignals, newsSignals,
+    weatherData, eventbriteSignals, yelpSignals,
+    searchConsoleData, placeDetails, brandVoice, venueId, userId,
   });
 
   return {
     venueName,
     venueType,
     city,
+    venueBusinessType,          // ← critical: tells dashboard which of 6 configs to apply
+    plan,                        // ← critical: tells dashboard which tier (starter/pro/enterprise)
+    venueId,                     // ← for saving/linking scan records
+    userId,                      // ← for user-scoped storage
     scannedAt: new Date().toISOString(),
     fomoScore: intelligence.fomoScore,
     fomoLabel: intelligence.fomoLabel,
@@ -297,6 +326,12 @@ async function runFullScan({ venueName, venueType, city, keywords, genres, compe
     searchConsoleData,
     dailyTrends,
     fomoSignals: intelligence.fomoSignals,
+    weatherSignal: weatherData?.available ? weatherData.weekendSignal : null,
+    weatherForecast: weatherData?.forecast?.filter(d => d.isWeekend) || [],
+    eventbriteSignals: (eventbriteSignals || []).filter(e => !e.status),
+    yelpSignals: (yelpSignals || []).filter(y => !y.status),
+    newsSignals,
+    trendSource: trendsData?.source || 'Reddit',
     drafts: intelligence.contentIdeas?.map(c => ({
       platform: c.platform,
       hook: c.hook,
@@ -305,6 +340,9 @@ async function runFullScan({ venueName, venueType, city, keywords, genres, compe
     auditTrail: [
       { action: 'Intelligence scan completed', detail: `Google Trends: ${trends.length} keywords scanned`, time: 'Just now', color: '#C8963E' },
       { action: isGoods ? 'Product demand signals collected' : 'Reddit signals collected', detail: `${redditSignals.length} trending posts analyzed`, time: 'Just now', color: '#1D6A48' },
+      { action: 'News signals collected', detail: `${(newsSignals||[]).length} news signals analyzed`, time: 'Just now', color: '#7C3AED' },
+      { action: 'Weather intelligence', detail: weatherData?.available ? weatherData.weekendSignal?.slice(0,60) : 'Weather data unavailable', time: 'Just now', color: '#0891B2' },
+      { action: isGoods ? 'Competitor review signals' : 'Event market signals', detail: isGoods ? `${(yelpSignals||[]).filter(y=>!y.status).length} competitor signals` : `${(eventbriteSignals||[]).filter(e=>!e.status).length} trending events in market`, time: 'Just now', color: '#F59E0B' },
       { action: 'Claude analysis complete', detail: `${isGoods ? 'Demand Score' : 'FOMO Score'}: ${intelligence.fomoScore} — ${intelligence.fomoLabel}`, time: 'Just now', color: '#2563EB' },
       { action: isGoods ? 'Product content drafts generated' : 'Content drafts generated', detail: `${intelligence.contentIdeas?.length || 0} pieces ready to review`, time: 'Just now', color: '#C0392B' },
     ],

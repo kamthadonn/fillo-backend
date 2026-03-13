@@ -45,54 +45,71 @@ app.use('/api/report',        require('./routes/report'));
 app.use('/api/whitelabel',    require('./routes/whitelabel'));
 app.use('/api/scans',         require('./routes/scans'));
 app.use('/api/spotlight',     require('./routes/spotlight'));
-app.use('/api/intelligence',   require('./routes/intelligence_learn'));
+app.use('/api/intelligence',  require('./routes/intelligence_learn'));
 app.use('/api/drafts',        require('./routes/drafts'));
+app.use('/api/x',             require('./routes/x'));
 
 // Hourly auto-scan
 // ── 24/7 INTELLIGENCE ENGINE ─────────────────────────────────────────
 // Every 6 hours: refresh intelligence profile for every active venue
-// This is what makes Fillo always learning — not just on login
+// Each venue runs independently — strict user isolation, no bleed
 cron.schedule('0 */6 * * *', async () => {
-  console.log('[Cron] Starting 6-hour intelligence refresh for all venues...');
+  console.log('[Cron] Starting 6-hour intelligence refresh...');
   try {
     const { createClient } = require('@supabase/supabase-js');
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-    // Get all active venues that have had a scan in the last 30 days
+    // Fetch all active venues WITH their owner's user record
+    // Only process venues where the user is active (not cancelled/past_due)
     const { data: venues } = await supabase
       .from('venues')
-      .select('*, users!inner(plan, status)')
+      .select('*, users!inner(id, plan, status, email)')
       .eq('is_active', true)
-      .limit(50); // process up to 50 venues per cycle
+      .in('users.status', ['active', 'trialing'])
+      .limit(50);
 
-    if (!venues?.length) { console.log('[Cron] No active venues found'); return; }
+    if (!venues?.length) { console.log('[Cron] No active venues'); return; }
 
     const { runDeepPull } = require('./services/deeppull');
     let refreshed = 0;
 
     for (const venue of venues) {
       try {
-        // Stagger requests to avoid rate limits
+        // Stagger to avoid rate limits
         await new Promise(r => setTimeout(r, 3000));
-        await runDeepPull(venue);
+
+        // ALWAYS pass userId so intelligence is stored under that user only
+        const userId = venue.users?.id || venue.user_id;
+        const plan   = venue.users?.plan || 'starter';
+
+        if (!userId) {
+          console.warn(`[Cron] Skipping ${venue.name} — no user_id found`);
+          continue;
+        }
+
+        await runDeepPull({ ...venue, userId, plan });
         refreshed++;
-        console.log(`[Cron] Refreshed: ${venue.name}`);
+        console.log(`[Cron] Refreshed: ${venue.name} (user: ${userId})`);
       } catch(e) {
         console.warn(`[Cron] Failed for ${venue.name}:`, e.message);
       }
     }
-    console.log(`[Cron] Intelligence refresh complete — ${refreshed}/${venues.length} venues updated`);
+
+    console.log(`[Cron] Complete — ${refreshed}/${venues.length} refreshed`);
   } catch(err) {
-    console.error('[Cron] Intelligence refresh error:', err.message);
+    console.error('[Cron] Error:', err.message);
   }
 });
 
-// Every hour: run a lightweight market signal update (trends only, no full re-pull)
+// Every hour: lightweight market signal cache refresh (global trends only, no user data)
+// This is safe — it just refreshes public trending topics, not user intelligence
 cron.schedule('0 * * * *', async () => {
   try {
-    const { scanTrends } = require('./services/googletrends');
-    const trends = await scanTrends();
-    console.log('[Cron] Market trends refreshed:', trends.length, 'signals');
+    const { getDailyTrends } = require('./services/googletrends');
+    const trends = await getDailyTrends('US');
+    // Store in memory cache only — not written to any user's record
+    global._cachedDailyTrends = { trends, cachedAt: Date.now() };
+    console.log('[Cron] Global trends cache refreshed:', trends.length, 'topics');
   } catch (err) {
     console.error('[Cron] Trends error:', err.message);
   }

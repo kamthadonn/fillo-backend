@@ -172,7 +172,18 @@ async function runDeepPull(venueData) {
   const keywordList    = toList(keywords);
   const eventTypeList  = toList(event_types);
 
-  const redditQueries = [
+  const isGoods = (venue_business_type || 'tickets') === 'goods';
+
+  const redditQueries = isGoods ? [
+    venueName,
+    `${city} boutique`,
+    `${city} shopping`,
+    ...genreList.slice(0, 2).map(g => `${g} fashion`),
+    ...competitorList.slice(0, 2),
+    `${city} retail`,
+    'streetwear trends',
+    'product drops'
+  ].filter(q => q?.length > 2) : [
     venueName,
     `${city} ${venueType || 'nightclub'}`,
     `${city} nightlife`,
@@ -181,7 +192,11 @@ async function runDeepPull(venueData) {
     `${city} events`
   ].filter(q => q?.length > 2);
 
-  const twitterMarketQ = [
+  const twitterMarketQ = isGoods ? [
+    `${city} boutique`,
+    `${city} new arrivals`,
+    `${genreList[0] || 'fashion'} drop`
+  ].filter(q => q?.length > 3) : [
     `${city} ${genreList[0] || 'nightlife'}`,
     `${city} events this weekend`
   ].filter(q => q?.length > 3);
@@ -243,13 +258,17 @@ async function runDeepPull(venueData) {
 }
 
 // ─── READ PROFILE (used by intelligence.js and spotlight.js) ─────────────────
-async function getVenueIntelligence(venueId) {
+async function getVenueIntelligence(venueId, userId = null) {
   const supabase = getSupabase();
-  const { data } = await supabase
+  let query = supabase
     .from('venue_intelligence')
     .select('*')
-    .eq('venue_id', venueId)
-    .maybeSingle();
+    .eq('venue_id', venueId);
+
+  // If userId provided, enforce it — prevents any cross-user read
+  if (userId) query = query.eq('user_id', userId);
+
+  const { data } = await query.maybeSingle();
   return data || null;
 }
 

@@ -40,32 +40,38 @@ router.post('/setup', async (req, res) => {
         .eq('is_active', true);
     }
 
-    const toStr = v => { if (!v) return ''; if (Array.isArray(v)) return v.filter(Boolean).join(', '); return String(v); };
+    // Safe string converter — handles arrays, strings, null
+    const toStr = v => {
+      if (!v) return '';
+      if (Array.isArray(v)) return v.filter(Boolean).join(', ');
+      if (typeof v === 'object') return JSON.stringify(v);
+      return String(v).trim();
+    };
 
     const { data: venue, error } = await supabase
       .from('venues')
       .insert([{
-        name:            data.name,
-        city:            data.city || '',
-        state:           data.state || '',
-        type:            data.type || 'venue',
+        name:            String(data.name || '').trim(),
+        city:            String(data.city || '').trim(),
+        state:           String(data.state || '').trim(),
+        type:            String(data.type || 'venue').trim(),
         capacity:        data.capacity ? parseInt(data.capacity) : null,
         genres:          toStr(data.genres),
         event_types:     toStr(data.eventTypes),
         busiest_nights:  toStr(data.busiestNights),
         competitors:     toStr(data.competitors),
         keywords:        toStr(data.customKeywords),
-        venue_business_type: data.venueBusinessType || 'tickets',
-        price_point:      data.pricePoint || null,
-        target_customers: data.targetCustomers || null,
-        product_categories: data.productCategories || null,
-        pilot_mode:      data.pilotMode || 'suggest',
-        alert_email:     data.alertEmail || '',
-        site_url:        data.siteUrl || '',
-        instagram:       data.socialHandles?.instagram || '',
-        tiktok:          data.socialHandles?.tiktok || '',
-        twitter:         data.socialHandles?.twitter || '',
-        facebook:        data.socialHandles?.facebook || '',
+        venue_business_type: String(data.venueBusinessType || 'tickets'),
+        price_point:      data.pricePoint ? String(data.pricePoint) : null,
+        target_customers: data.targetCustomers ? toStr(data.targetCustomers) : null,
+        product_categories: data.productCategories ? toStr(data.productCategories) : null,
+        pilot_mode:      String(data.pilotMode || 'suggest'),
+        alert_email:     String(data.alertEmail || '').trim(),
+        site_url:        String(data.siteUrl || '').trim(),
+        instagram:       String(data.socialHandles?.instagram || '').trim(),
+        tiktok:          String(data.socialHandles?.tiktok || '').trim(),
+        twitter:         String(data.socialHandles?.twitter || '').trim(),
+        facebook:        String(data.socialHandles?.facebook || '').trim(),
         is_active:       true,
         user_id:         userId || null,
       }])
@@ -88,15 +94,19 @@ router.post('/setup', async (req, res) => {
     // Does NOT generate drafts or save scans
     try {
       const { runDeepPull } = require('../services/deeppull');
+      const toStrSafe = v => { if (!v) return ''; if (Array.isArray(v)) return v.filter(Boolean).join(', '); return String(v); };
       const venueForPull = {
         ...venue,
-        event_types: Array.isArray(data.eventTypes) ? data.eventTypes.filter(Boolean).join(', ') : (data.eventTypes || ''),
-        genres: Array.isArray(data.genres) ? data.genres.filter(Boolean).join(', ') : (data.genres || ''),
-        competitors: Array.isArray(data.competitors) ? data.competitors.filter(Boolean).join(', ') : (data.competitors || ''),
-        keywords: Array.isArray(data.customKeywords) ? data.customKeywords.filter(Boolean).join(', ') : (data.customKeywords || '')
+        event_types: toStrSafe(data.eventTypes),
+        genres:      toStrSafe(data.genres),
+        competitors: toStrSafe(data.competitors),
+        keywords:    toStrSafe(data.customKeywords),
+        userId,            // ← ALWAYS scope intelligence to this user
+        user_id: userId,   // ← both fields used across different services
+        plan:    'starter' // new signups start here — updated after payment
       };
       runDeepPull(venueForPull)
-        .then(r => console.log(`✅ [DeepPull] Done for ${venue.name} — ${r.signalCount} signals`))
+        .then(r => console.log(`✅ [DeepPull] Done for ${venue.name} (user: ${userId}) — ${r?.signalCount || 0} signals`))
         .catch(e => console.error('[DeepPull] Background error:', e.message));
     } catch(e) { console.error('[DeepPull] Init error:', e.message); }
 

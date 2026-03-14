@@ -142,6 +142,30 @@ cron.schedule('0 */6 * * *', async () => {
   }
 });
 
+
+cron.schedule('0 8 * * 1', async () => {
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+    const { sendWeeklyReport } = require('./services/emailalerts');
+    const { data: users } = await supabase.from('users').select('id,email').eq('plan','enterprise').eq('status','active');
+    if (!users?.length) return;
+    for (const user of users) {
+      try {
+        await new Promise(r=>setTimeout(r,2000));
+        const sevenDaysAgo = new Date(Date.now()-7*24*60*60*1000).toISOString();
+        const [{ data: venue },{ data: scans },{ data: audits }] = await Promise.all([
+          supabase.from('venues').select('name,city,alert_email').eq('user_id',user.id).eq('is_active',true).limit(1).maybeSingle(),
+          supabase.from('scans').select('fomo_score,insight').eq('user_id',user.id).gte('created_at',sevenDaysAgo),
+          supabase.from('audit_trail').select('action').eq('user_id',user.id).gte('created_at',sevenDaysAgo),
+        ]);
+        if (!venue) continue;
+        await sendWeeklyReport({ to:venue.alert_email||user.email, venueName:venue.name, scans:scans||[], audits:audits||[], plan:'enterprise' });
+      } catch(e) { console.warn('[Cron] Weekly report failed:',e.message); }
+    }
+  } catch(err) { console.error('[Cron] Weekly report error:',err.message); }
+});
+
 // Every hour: lightweight market signal cache refresh (global trends only, no user data)
 // This is safe — it just refreshes public trending topics, not user intelligence
 cron.schedule('0 * * * *', async () => {

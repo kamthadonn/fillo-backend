@@ -10,6 +10,7 @@ app.set('trust proxy', 1);
 const ALLOWED_ORIGINS = [
   'https://fillo.tech',
   'https://www.fillo.tech',
+  'https://api.fillo.tech',
   'http://localhost:3000',
   'http://localhost:5500',
   'http://127.0.0.1:5500',

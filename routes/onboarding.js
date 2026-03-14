@@ -89,10 +89,12 @@ router.post('/setup', async (req, res) => {
 
     // Link venue back to user record
     if (userId) {
+      const accountType = data.venueBusinessType === 'goods' ? 'product' : 'venue';
       await supabase
         .from('users')
-        .update({ updated_at: new Date().toISOString() })
+        .update({ updated_at: new Date().toISOString(), account_type: accountType })
         .eq('id', userId);
+      console.log('account_type set:', accountType);
     }
 
     console.log(`✅ New venue: ${venue.name} (${venue.id}) → user: ${userId || 'anonymous'}`);

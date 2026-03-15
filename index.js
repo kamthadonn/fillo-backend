@@ -10,7 +10,6 @@ app.set('trust proxy', 1);
 const ALLOWED_ORIGINS = [
   'https://fillo.tech',
   'https://www.fillo.tech',
-  'https://api.fillo.tech',
   'http://localhost:3000',
   'http://localhost:5500',
   'http://127.0.0.1:5500',
@@ -29,6 +28,8 @@ app.use(cors({
   credentials: true,
 }));
 
+// Handle preflight for all routes (Express 5 / path-to-regexp v8 compatible)
+app.options('/{*path}', cors());
 
 // ── CRITICAL: Stripe webhook needs raw body BEFORE express.json() ──
 // Mount webhook route first with raw body parser
@@ -74,6 +75,8 @@ function useRoute(app, prefix, path) {
 useRoute(app, '/api/auth',          './routes/auth');
 useRoute(app, '/api/demo',          './routes/demo');
 useRoute(app, '/api/trends',        './routes/trends');
+useRoute(app, '/api/integrations',  './routes/integrations');
+useRoute(app, '/api/ask',           './routes/ask');
 useRoute(app, '/api/cms',           './routes/cms');
 useRoute(app, '/api/onboarding',    './routes/onboarding');
 useRoute(app, '/api/stripe',        './routes/stripe');
@@ -142,31 +145,55 @@ cron.schedule('0 */6 * * *', async () => {
   }
 });
 
-
+// Every Monday 8am — send weekly intelligence reports to Enterprise users
 cron.schedule('0 8 * * 1', async () => {
+  console.log('[Cron] Sending weekly reports...');
   try {
     const { createClient } = require('@supabase/supabase-js');
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
     const { sendWeeklyReport } = require('./services/emailalerts');
-    const { data: users } = await supabase.from('users').select('id,email').eq('plan','enterprise').eq('status','active');
+
+    // Get all active Enterprise users with alert emails
+    const { data: users } = await supabase
+      .from('users')
+      .select('id, email')
+      .eq('plan', 'enterprise')
+      .eq('status', 'active');
+
     if (!users?.length) return;
+
     for (const user of users) {
       try {
-        await new Promise(r=>setTimeout(r,2000));
-        const sevenDaysAgo = new Date(Date.now()-7*24*60*60*1000).toISOString();
-        const [{ data: venue },{ data: scans },{ data: audits }] = await Promise.all([
-          supabase.from('venues').select('name,city,alert_email').eq('user_id',user.id).eq('is_active',true).limit(1).maybeSingle(),
-          supabase.from('scans').select('fomo_score,insight').eq('user_id',user.id).gte('created_at',sevenDaysAgo),
-          supabase.from('audit_trail').select('action').eq('user_id',user.id).gte('created_at',sevenDaysAgo),
-        ]);
-        if (!venue) continue;
-        await sendWeeklyReport({ to:venue.alert_email||user.email, venueName:venue.name, scans:scans||[], audits:audits||[], plan:'enterprise' });
-      } catch(e) { console.warn('[Cron] Weekly report failed:',e.message); }
-    }
-  } catch(err) { console.error('[Cron] Weekly report error:',err.message); }
-});
+        await new Promise(r => setTimeout(r, 2000)); // stagger
 
-// Every hour: lightweight market signal cache refresh (global trends only, no user data)
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+        const [{ data: venue }, { data: scans }, { data: audits }] = await Promise.all([
+          supabase.from('venues').select('name, city, alert_email').eq('user_id', user.id).eq('is_active', true).limit(1).maybeSingle(),
+          supabase.from('scans').select('fomo_score, insight, created_at').eq('user_id', user.id).gte('created_at', sevenDaysAgo),
+          supabase.from('audit_trail').select('action').eq('user_id', user.id).gte('created_at', sevenDaysAgo),
+        ]);
+
+        if (!venue) continue;
+
+        await sendWeeklyReport({
+          to:        venue.alert_email || user.email,
+          venueName: venue.name,
+          scans:     scans || [],
+          audits:    audits || [],
+          topScore:  Math.max(...(scans || []).map(s => s.fomo_score || 0), 0),
+          plan:      'enterprise',
+        });
+
+        console.log(`[Cron] Weekly report sent: ${venue.name}`);
+      } catch(e) {
+        console.warn(`[Cron] Weekly report failed for ${user.email}:`, e.message);
+      }
+    }
+  } catch(err) {
+    console.error('[Cron] Weekly report error:', err.message);
+  }
+});
 // This is safe — it just refreshes public trending topics, not user intelligence
 cron.schedule('0 * * * *', async () => {
   try {

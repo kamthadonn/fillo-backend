@@ -1,24 +1,28 @@
-const express = require('express');
-const router = express.Router();
+const express    = require('express');
+const router     = express.Router();
+const jwt        = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
-const fetch = require('node-fetch');
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+const AUTH_SECRET = process.env.AUTH_SECRET || 'fillo-super-secret-2026';
 
-// ── AUTH MIDDLEWARE ────────────────────────────────────────────────────
-function auth(req, res, next) {
-  const token = (req.headers.authorization || '').replace('Bearer ', '');
-  if (!token) return res.status(401).json({ error: 'No token' });
-  req.token = token;
-
-  // Resolve user from token
-  supabase.from('users').select('id, email, plan').eq('token', token).single()
-    .then(({ data, error }) => {
-      if (error || !data) return res.status(401).json({ error: 'Invalid token' });
-      req.user = data;
-      next();
-    });
+function getSupabase() {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 }
+
+// JWT auth — same pattern as every other route
+function auth(req, res, next) {
+  try {
+    const raw = (req.headers.authorization || '').replace('Bearer ', '').trim();
+    if (!raw) return res.status(401).json({ error: 'No token' });
+    const decoded = jwt.verify(raw, AUTH_SECRET);
+    req.user = { id: decoded.userId, userId: decoded.userId, email: decoded.email, plan: decoded.plan || 'starter' };
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+// node-fetch may not be installed — use built-in fetch (Node 18+) with fallback
 
 // ── GET ALL INTEGRATIONS FOR USER ────────────────────────────────────────
 // GET /api/integrations
@@ -55,7 +59,7 @@ router.post('/', auth, async (req, res) => {
   if (!platform) return res.status(400).json({ error: 'platform required' });
 
   try {
-    await supabase.from('integrations').upsert({
+    await getSupabase().from('integrations').upsert({
       user_id:   req.user.id,
       platform,
       connected: true,
@@ -100,7 +104,7 @@ router.post('/eventbrite/connect', auth, async (req, res) => {
     // Encrypt token before storing (base64 for now — swap for AES in production)
     const tokenEnc = Buffer.from(token).toString('base64');
 
-    await supabase.from('integrations').upsert({
+    await getSupabase().from('integrations').upsert({
       user_id:    req.user.id,
       platform:  'eventbrite',
       connected:  true,
@@ -149,7 +153,7 @@ router.post('/eventbrite/sync', auth, async (req, res) => {
     }
 
     // Save snapshot to Supabase
-    await supabase.from('integrations').upsert({
+    await getSupabase().from('integrations').upsert({
       user_id:   req.user.id,
       platform:  'eventbrite',
       connected: true,
@@ -192,7 +196,7 @@ router.post('/dice/connect', auth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid Dice token' });
     }
 
-    await supabase.from('integrations').upsert({
+    await getSupabase().from('integrations').upsert({
       user_id:    req.user.id,
       platform:  'dice',
       connected:  true,
@@ -223,7 +227,7 @@ router.post('/ticketmaster/connect', auth, async (req, res) => {
       return res.status(400).json({ error: 'Invalid API key' });
     }
 
-    await supabase.from('integrations').upsert({
+    await getSupabase().from('integrations').upsert({
       user_id:    req.user.id,
       platform:  'ticketmaster',
       connected:  true,
@@ -245,7 +249,7 @@ router.post('/webhook/generate', auth, async (req, res) => {
   const secret    = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   const endpoint  = `${process.env.FRONTEND_URL || 'https://api.fillo.tech'}/api/integrations/webhook/receive/${req.user.id}/${secret}`;
 
-  await supabase.from('integrations').upsert({
+  await getSupabase().from('integrations').upsert({
     user_id:    req.user.id,
     platform:  'webhook',
     connected:  true,
@@ -283,7 +287,7 @@ router.post('/webhook/receive/:userId/:secret', async (req, res) => {
     const revenue     = payload.total || payload.amount || payload.revenue || 0;
 
     // Save webhook event to audit trail for this user
-    await supabase.from('audit_trail').insert({
+    await getSupabase().from('audit_trail').insert({
       user_id:    userId,
       action:    'Webhook received: ' + action,
       description: eventName + ' · ' + ticketsSold + ' ticket(s) · $' + revenue,
@@ -293,7 +297,7 @@ router.post('/webhook/receive/:userId/:secret', async (req, res) => {
     });
 
     // Update integrations last_sync
-    await supabase.from('integrations').update({ last_sync: new Date().toISOString() })
+    await getSupabase().from('integrations').update({ last_sync: new Date().toISOString() })
       .eq('user_id', userId).eq('platform', 'webhook');
 
     res.json({ received: true });
@@ -340,7 +344,7 @@ router.post('/cms/connect', auth, async (req, res) => {
       return res.status(400).json({ error: 'Could not verify credentials. Please check and try again.' });
     }
 
-    await supabase.from('integrations').upsert({
+    await getSupabase().from('integrations').upsert({
       user_id:    req.user.id,
       platform,
       connected:  true,
@@ -360,7 +364,7 @@ router.post('/cms/connect', auth, async (req, res) => {
 // DELETE /api/integrations/:platform/disconnect
 router.delete('/:platform/disconnect', auth, async (req, res) => {
   try {
-    await supabase.from('integrations')
+    await getSupabase().from('integrations')
       .update({ connected: false, updated_at: new Date().toISOString() })
       .eq('user_id', req.user.id)
       .eq('platform', req.params.platform);
@@ -436,7 +440,7 @@ async function syncPlatform(integration, userId) {
     }
 
     // Update last_sync
-    await supabase.from('integrations')
+    await getSupabase().from('integrations')
       .update({ last_sync: new Date().toISOString(), meta: { ...meta, last_count: totalSold } })
       .eq('user_id', userId).eq('platform', 'eventbrite');
 
@@ -469,7 +473,7 @@ async function syncPlatform(integration, userId) {
       return sum + (e.node?.tickets || []).reduce((s, t) => s + ((t.total || 0) / 100), 0);
     }, 0);
 
-    await supabase.from('integrations')
+    await getSupabase().from('integrations')
       .update({ last_sync: new Date().toISOString() })
       .eq('user_id', userId).eq('platform', 'dice');
 
@@ -499,7 +503,7 @@ async function syncPlatform(integration, userId) {
     const events  = tmData._embedded?.events || [];
     const onSale  = events.filter(e => e.dates?.status?.code === 'onsale').length;
 
-    await supabase.from('integrations')
+    await getSupabase().from('integrations')
       .update({ last_sync: new Date().toISOString() })
       .eq('user_id', userId).eq('platform', 'ticketmaster');
 

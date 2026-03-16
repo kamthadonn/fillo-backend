@@ -4,10 +4,6 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-function getAccountId(req) {
-  return req.user.ownerId || req.user.userId;
-}
-
 function authRequired(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
@@ -19,32 +15,34 @@ function authRequired(req, res, next) {
   }
 }
 
-// GET /api/audit
+// GET /api/audit — get audit trail entries for user
 router.get('/', authRequired, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = req.query.limit || 100;
     const { data, error } = await supabase
       .from('audit_trail')
       .select('*')
-      .eq('user_id', getAccountId(req))
+      .eq('user_id', (req.user.userId || req.user.id))
       .order('created_at', { ascending: false })
       .limit(limit);
+
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ success: true, entries: data || [] });
+    res.json({ success: true, audit: data || [], entries: data || [] }); // both keys for compat
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/audit/export
+// GET /api/audit/export — return CSV string
 router.get('/export', authRequired, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('audit_trail')
       .select('*')
-      .eq('user_id', getAccountId(req))
+      .eq('user_id', (req.user.userId || req.user.id))
       .order('created_at', { ascending: false })
       .limit(1000);
+
     if (error) return res.status(500).json({ error: error.message });
 
     const rows = [['Timestamp', 'Action', 'Description', 'Platform', 'Pilot Mode', 'URL']];
@@ -68,12 +66,12 @@ router.get('/export', authRequired, async (req, res) => {
   }
 });
 
-// POST /api/audit
+// POST /api/audit — log a new entry
 router.post('/', authRequired, async (req, res) => {
   try {
     const { action, description, platform, url, pilot_mode } = req.body;
     const { error } = await supabase.from('audit_trail').insert({
-      user_id: getAccountId(req),
+      user_id: (req.user.userId || req.user.id),
       action,
       description,
       platform,

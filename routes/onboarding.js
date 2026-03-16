@@ -30,13 +30,6 @@ router.post('/setup', async (req, res) => {
 
     const supabase = getSupabase();
     const userId = getUserIdFromReq(req);
-    const toArr = v => {
-      if (!v) return null;
-      if (Array.isArray(v)) { const a = v.map(s=>String(s).trim()).filter(Boolean); return a.length ? a : null; }
-      if (typeof v === 'string') { const a = v.split(',').map(s=>s.trim()).filter(Boolean); return a.length ? a : null; }
-      return null;
-    };
-    const toText = v => { if (!v) return null; const s = String(v).trim(); return s || null; };
 
     // If we have a userId, deactivate their existing active venue first
     if (userId) {
@@ -47,40 +40,52 @@ router.post('/setup', async (req, res) => {
         .eq('is_active', true);
     }
 
-    // Safe string converter — handles arrays, strings, null
+    // Safe string converter — NEVER returns empty string to Postgres
+    // Empty string on an array column causes "malformed array literal" error
     const toStr = v => {
       if (!v) return null;
-      if (Array.isArray(v)) { const j = v.filter(Boolean).join(', '); return j || null; }
-      if (typeof v === 'object') return JSON.stringify(v);
-      const s = String(v).trim(); return s || null;
+      if (Array.isArray(v)) {
+        const joined = v.filter(Boolean).join(', ');
+        return joined || null;
+      }
+      if (typeof v === 'object') return JSON.stringify(v) || null;
+      const s = String(v).trim();
+      return s || null;
+    };
+
+    // Safe string for non-array text columns — returns null not ''
+    const toText = v => {
+      if (!v) return null;
+      const s = String(v).trim();
+      return s || null;
     };
 
     const { data: venue, error } = await supabase
       .from('venues')
       .insert([{
-        name:            String(data.name || '').trim(),
-        city:            String(data.city || '').trim(),
-        state:           String(data.state || '').trim(),
-        type:            String(data.type || 'venue').trim(),
-        capacity:        data.capacity ? parseInt(data.capacity) : null,
-        genres:          toArr(data.genres),
-        event_types:     toArr(data.eventTypes),
-        busiest_nights:  toArr(data.busiestNights),
-        competitors:     toArr(data.competitors),
-        keywords:        toArr(data.customKeywords),
+        name:               String(data.name || '').trim(),
+        city:               toText(data.city),
+        state:              toText(data.state),
+        type:               toText(data.type) || 'venue',
+        capacity:           data.capacity ? parseInt(data.capacity) : null,
+        genres:             toStr(data.genres),
+        event_types:        toStr(data.eventTypes),
+        busiest_nights:     toStr(data.busiestNights),
+        competitors:        toStr(data.competitors),
+        keywords:           toStr(data.customKeywords),
         venue_business_type: String(data.venueBusinessType || 'tickets'),
-        price_point:      data.pricePoint ? String(data.pricePoint) : null,
-        target_customers: data.targetCustomers ? toStr(data.targetCustomers) : null,
-        product_categories: data.productCategories ? toStr(data.productCategories) : null,
-        pilot_mode:      String(data.pilotMode || 'suggest'),
-        alert_email:     String(data.alertEmail || '').trim(),
-        site_url:        String(data.siteUrl || '').trim(),
-        instagram:       String(data.socialHandles?.instagram || '').trim(),
-        tiktok:          String(data.socialHandles?.tiktok || '').trim(),
-        twitter:         String(data.socialHandles?.twitter || '').trim(),
-        facebook:        String(data.socialHandles?.facebook || '').trim(),
-        is_active:       true,
-        user_id:         userId || null,
+        price_point:        toText(data.pricePoint),
+        target_customers:   toStr(data.targetCustomers),
+        product_categories: toStr(data.productCategories),
+        pilot_mode:         toText(data.pilotMode) || 'suggest',
+        alert_email:        toText(data.alertEmail),
+        site_url:           toText(data.siteUrl),
+        instagram:          toText(data.socialHandles?.instagram),
+        tiktok:             toText(data.socialHandles?.tiktok),
+        twitter:            toText(data.socialHandles?.twitter),
+        facebook:           toText(data.socialHandles?.facebook),
+        is_active:          true,
+        user_id:            userId || null,
       }])
       .select()
       .single();
@@ -89,12 +94,10 @@ router.post('/setup', async (req, res) => {
 
     // Link venue back to user record
     if (userId) {
-      const accountType = data.venueBusinessType === 'goods' ? 'product' : 'venue';
       await supabase
         .from('users')
-        .update({ updated_at: new Date().toISOString(), account_type: accountType })
+        .update({ updated_at: new Date().toISOString() })
         .eq('id', userId);
-      console.log('account_type set:', accountType);
     }
 
     console.log(`✅ New venue: ${venue.name} (${venue.id}) → user: ${userId || 'anonymous'}`);
@@ -103,7 +106,7 @@ router.post('/setup', async (req, res) => {
     // Does NOT generate drafts or save scans
     try {
       const { runDeepPull } = require('../services/deeppull');
-      const toStrSafe = v => { if (!v) return null; if (Array.isArray(v)) return v.filter(Boolean).join(', '); return String(v); };
+      const toStrSafe = v => { if (!v) return ''; if (Array.isArray(v)) return v.filter(Boolean).join(', '); return String(v); };
       const venueForPull = {
         ...venue,
         event_types: toStrSafe(data.eventTypes),

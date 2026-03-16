@@ -50,7 +50,7 @@ router.post('/test', authRequired, requirePro, async (req, res) => {
 router.post('/publish', authRequired, requirePro, async (req, res) => {
   try {
     const { cmsType, draft, pilotMode } = req.body;
-    const userId = req.user.id;
+    const userId = req.user.userId || req.user.id;
 
     const { data: venue } = await supabase
       .from('venues')
@@ -91,7 +91,7 @@ router.post('/publish', authRequired, requirePro, async (req, res) => {
         venueId: venue.id,
       });
     } else {
-      return res.status(400).json({ error: 'No CMS configured for this venue. Add CMS credentials in settings.' });
+      return res.status(400).json({ error: 'No CMS configured. Add CMS credentials in Settings → Auto-Publish.' });
     }
 
     if (result.success && result.auditEntry) {
@@ -115,7 +115,7 @@ router.post('/publish', authRequired, requirePro, async (req, res) => {
 router.post('/credentials', authRequired, requirePro, async (req, res) => {
   try {
     const { cmsType, siteUrl, username, appPassword, apiToken, collectionId } = req.body;
-    const userId = req.user.id;
+    const userId = req.user.userId || req.user.id;
 
     let testResult;
     if (cmsType === 'wordpress') {
@@ -143,7 +143,7 @@ router.post('/credentials', authRequired, requirePro, async (req, res) => {
       .eq('user_id', userId);
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ success: true, message: `${cmsType} connected successfully.`, user: testResult.user });
+    res.json({ success: true, message: `${cmsType} connected successfully.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -151,10 +151,11 @@ router.post('/credentials', authRequired, requirePro, async (req, res) => {
 
 router.get('/posts', authRequired, requirePro, async (req, res) => {
   try {
+    const userId = req.user.userId || req.user.id;
     const { data: venue } = await supabase
       .from('venues')
       .select('cms_type, cms_site_url, cms_username, cms_app_password, cms_connected')
-      .eq('user_id', req.user.id)
+      .eq('user_id', userId)
       .eq('is_active', true)
       .single();
 

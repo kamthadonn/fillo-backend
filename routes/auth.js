@@ -19,7 +19,6 @@ function signToken(user, extra = {}) {
     email:  user.email,
     plan:   user.plan   || 'starter',
     status: user.status || 'pending_payment',
-    accountType: user.account_type || 'venue',
     ...extra,
   };
   return jwt.sign(payload, AUTH_SECRET, { expiresIn: '30d' });
@@ -143,7 +142,7 @@ router.get('/me', async (req, res) => {
 
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, email, name, first_name, last_name, plan, billing, status, account_type, created_at')
+      .select('id, email, name, first_name, last_name, plan, billing, status, created_at')
       .eq('id', decoded.userId)
       .single();
 

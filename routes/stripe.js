@@ -1,10 +1,17 @@
 const express    = require('express');
 const router     = express.Router();
-const Stripe     = require('stripe');
 const jwt        = require('jsonwebtoken');
 
-const stripe     = new Stripe(process.env.STRIPE_SECRET_KEY);
 const AUTH_SECRET = process.env.AUTH_SECRET || 'fillo-super-secret-2026';
+
+// Lazy-init Stripe — if key missing at startup, routes return a clear error
+// instead of crashing the entire backend
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY not set in Railway environment variables');
+  const Stripe = require('stripe');
+  return new Stripe(key);
+}
 
 function getSupabase() {
   const { createClient } = require('@supabase/supabase-js');
@@ -27,7 +34,7 @@ const PRICES = {
   starter_yearly:     'price_1T9Zwk3eFtSO3FCMk3YDBdNr',
   pro_monthly:        'price_1T9ZtN3eFtSO3FCMCgpHLj5k',
   pro_yearly:         'price_1T9Zx93eFtSO3FCME3Vig4AD',
-  enterprise_monthly: 'price_1T9Ztp3eFtSO3FCMEum2rtep',
+  enterprise_monthly: 'price_1T9toc3eFtSO3FCM6r1vE6O3',
   enterprise_yearly:  'price_1T9Zxb3eFtSO3FCM4fCn8q9S',
   voucher_monthly:    'price_1T9ZvD3eFtSO3FCMTK0RGEsK',
   voucher_yearly:     'price_1T9Zv43eFtSO3FCM6K7FqFUR',
@@ -52,6 +59,7 @@ const ADDON_ACTIONS = {
 // ─── POST /api/stripe/checkout — subscription plans ──────────────────────────
 router.post('/checkout', async (req, res) => {
   try {
+    const stripe = getStripe();
     const { plan, billing, voucher } = req.body;
     const planKey    = voucher ? 'voucher' : (plan || 'pro');
     const billingKey = billing || 'monthly';
@@ -67,8 +75,8 @@ router.post('/checkout', async (req, res) => {
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.FRONTEND_URL}/success.html?session_id={CHECKOUT_SESSION_ID}&plan=${planKey}&billing=${billingKey}`,
-      cancel_url:  `${process.env.FRONTEND_URL}/index.html#pricing`,
+      success_url: `${process.env.FRONTEND_URL || 'https://fillo.tech'}/success.html?session_id={CHECKOUT_SESSION_ID}&plan=${planKey}&billing=${billingKey}`,
+      cancel_url:  `${process.env.FRONTEND_URL || 'https://fillo.tech'}/index.html#pricing`,
       metadata: {
         plan:      planKey,
         billing:   billingKey,
@@ -93,6 +101,7 @@ router.post('/checkout', async (req, res) => {
 // Body: { addon: 'instagram_overage' | 'x_overage' | 'scan_overage' | 'serpapi_upgrade' }
 router.post('/addon', async (req, res) => {
   try {
+    const stripe = getStripe();
     const user = getUserFromReq(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -119,8 +128,8 @@ router.post('/addon', async (req, res) => {
       mode: 'payment',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.FRONTEND_URL}/dashboard.html?addon_success=${addon}`,
-      cancel_url:  `${process.env.FRONTEND_URL}/dashboard.html?addon_cancelled=1`,
+      success_url: `${process.env.FRONTEND_URL || 'https://fillo.tech'}/dashboard.html?addon_success=${addon}`,
+      cancel_url:  `${process.env.FRONTEND_URL || 'https://fillo.tech'}/dashboard.html?addon_cancelled=1`,
       metadata: {
         addon,
         user_id: user.userId || user.id || '',
@@ -140,6 +149,7 @@ router.post('/addon', async (req, res) => {
 // ─── POST /api/stripe/upgrade — switch subscription plan ─────────────────────
 router.post('/upgrade', async (req, res) => {
   try {
+    const stripe = getStripe();
     const user = getUserFromReq(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -151,8 +161,8 @@ router.post('/upgrade', async (req, res) => {
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.FRONTEND_URL}/success.html?plan=${plan}&billing=${billing}&upgrade=1`,
-      cancel_url:  `${process.env.FRONTEND_URL}/dashboard.html`,
+      success_url: `${process.env.FRONTEND_URL || 'https://fillo.tech'}/success.html?plan=${plan}&billing=${billing}&upgrade=1`,
+      cancel_url:  `${process.env.FRONTEND_URL || 'https://fillo.tech'}/dashboard.html`,
       metadata: {
         plan,
         billing: billing || 'monthly',
@@ -174,6 +184,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
   let event;
 
   try {
+    const stripe = getStripe();
     event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error('Webhook sig error:', err.message);
@@ -314,6 +325,7 @@ router.get('/plans', (req, res) => {
 // ─── POST /api/stripe/portal ─────────────────────────────────────────────────
 router.post('/portal', async (req, res) => {
   try {
+    const stripe = getStripe();
     const user = getUserFromReq(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -330,7 +342,7 @@ router.post('/portal', async (req, res) => {
 
     const session = await stripe.billingPortal.sessions.create({
       customer:   userData.stripe_customer_id,
-      return_url: `${process.env.FRONTEND_URL}/dashboard.html`,
+      return_url: `${process.env.FRONTEND_URL || 'https://fillo.tech'}/dashboard.html`,
     });
 
     res.json({ url: session.url });

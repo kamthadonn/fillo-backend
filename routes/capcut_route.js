@@ -1,8 +1,3 @@
-// routes/capcut.js
-// CapCut Studio — Enterprise only
-// Generates SeedAnce 2.0 prompts, video timelines, scripts, captions
-// from live Fillo intelligence data
-
 const express = require('express');
 const router  = express.Router();
 const jwt     = require('jsonwebtoken');
@@ -13,53 +8,43 @@ function getSupabase() {
 }
 
 function authRequired(req, res, next) {
-  const token = req.headers.authorization?.replace('Bearer ', '');
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   try {
     req.user = jwt.verify(token, process.env.AUTH_SECRET || 'fillo-super-secret-2026');
     next();
-  } catch {
-    res.status(401).json({ error: 'Invalid token' });
+  } catch(e) {
+    return res.status(401).json({ error: 'Invalid token' });
   }
 }
 
 function requireEnterprise(req, res, next) {
   const plan = (req.user.plan || 'starter').toLowerCase();
   if (plan !== 'enterprise' && plan !== 'voucher') {
-    return res.status(403).json({
-      error: 'CapCut Studio is an Enterprise feature.',
-      upgrade: true,
-      upgradeUrl: '/index.html#pricing',
-    });
+    return res.status(403).json({ error: 'CapCut Studio requires Enterprise.', upgrade: true });
   }
   next();
 }
 
-// ── POST /api/capcut/generate ─────────────────────────────────────────────────
-// Main generation endpoint — takes venue context + video preferences
-// Returns full production package: timeline, SeedAnce prompt, script, captions
+// POST /api/capcut/generate
 router.post('/generate', authRequired, requireEnterprise, async (req, res) => {
   try {
     const supabase = getSupabase();
     const userId   = req.user.userId || req.user.id;
-    const plan     = req.user.plan || 'enterprise';
-
     const { videoType = 'urgency', format = 'reels' } = req.body;
 
-    // Load venue
     const { data: venue } = await supabase
       .from('venues')
-      .select('id, name, city, state, venue_business_type, type')
+      .select('id, name, city, state, venue_business_type')
       .eq('user_id', userId)
       .eq('is_active', true)
       .maybeSingle();
 
     if (!venue) return res.status(404).json({ error: 'No venue found. Complete onboarding first.' });
 
-    // Load latest scan for intelligence context
     const { data: latestScan } = await supabase
       .from('scans')
-      .select('fomo_score, trends, insight, created_at')
+      .select('fomo_score, trends, insight')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -70,94 +55,55 @@ router.post('/generate', authRequired, requireEnterprise, async (req, res) => {
     try { trends = JSON.parse(latestScan?.trends || '[]'); } catch(e) {}
     const insight = latestScan?.insight || '';
 
-    const { generateVideoPackage, buildFallback } = require('../services/capcut');
-
     let result;
     try {
+      const { generateVideoPackage } = require('../services/capcut');
       result = await generateVideoPackage({
         venueName: venue.name,
         city:      venue.city || '',
-        fomoScore,
-        trends,
-        insight,
-        videoType,
-        format,
-        plan,
+        fomoScore, trends, insight, videoType, format,
+        plan:   req.user.plan || 'enterprise',
         userId,
       });
     } catch(err) {
-      console.warn('[CapCut] Claude generation failed, using fallback:', err.message);
-      result = buildFallback({
-        venueName: venue.name,
-        city:      venue.city || '',
-        fomoScore,
-        videoType,
-        format,
-      });
+      console.warn('[CapCut] Claude failed, using fallback:', err.message);
+      const { buildFallback } = require('../services/capcut');
+      result = buildFallback({ venueName: venue.name, city: venue.city || '', fomoScore, videoType, format });
     }
 
-    // Save to audit trail
     try {
       await supabase.from('audit_trail').insert({
         user_id:     userId,
-        action:      `CapCut video package generated — ${videoType}`,
-        description: `${venue.name} · Format: ${format} · FOMO Score: ${fomoScore} · SeedAnce 2.0`,
+        action:      'CapCut video package generated — ' + videoType,
+        description: venue.name + ' · ' + format + ' · FOMO Score: ' + fomoScore,
         platform:    'CapCut Studio',
         created_at:  new Date().toISOString(),
       });
-    } catch(e) { /* non-blocking */ }
+    } catch(e) {}
 
     res.json(result);
-  } catch (err) {
-    console.error('[CapCut] Error:', err.message);
+  } catch(err) {
+    console.error('[CapCut]', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── GET /api/capcut/formats ───────────────────────────────────────────────────
-// Returns all available video formats and SeedAnce free features
+// GET /api/capcut/formats
 router.get('/formats', authRequired, (req, res) => {
-  const { FORMAT_SPECS, SEEDANCE_FREE_FEATURES } = require('../services/capcut');
   res.json({
     success: true,
-    formats: FORMAT_SPECS,
-    seedanceFreeFeatures: SEEDANCE_FREE_FEATURES,
+    formats: {
+      reels:     { width:1080, height:1920, fps:30, duration:15, label:'Instagram Reels / TikTok' },
+      shorts:    { width:1080, height:1920, fps:30, duration:30, label:'YouTube Shorts' },
+      story:     { width:1080, height:1920, fps:30, duration:15, label:'Story (IG/FB)' },
+      landscape: { width:1920, height:1080, fps:30, duration:60, label:'Landscape / YouTube' },
+      square:    { width:1080, height:1080, fps:30, duration:30, label:'Square Feed Post' },
+    },
     capcutLinks: {
       web:    'https://www.capcut.com',
       appIos: 'https://apps.apple.com/app/capcut/id1500855883',
-      appAndroid: 'https://play.google.com/store/apps/details?id=com.lemon.lvoverseas',
     },
   });
-});
-
-// ── POST /api/capcut/seedance-prompt ─────────────────────────────────────────
-// Quick endpoint — just generates a SeedAnce 2.0 prompt, no full package
-// Faster for users who just want the AI prompt
-router.post('/seedance-prompt', authRequired, requireEnterprise, async (req, res) => {
-  try {
-    const { sceneDescription, venueName, mood, duration = 15 } = req.body;
-    if (!sceneDescription) return res.status(400).json({ error: 'sceneDescription required' });
-
-    const Anthropic = require('@anthropic-ai/sdk');
-    const client    = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const message = await client.messages.create({
-      model:      'claude-sonnet-4-20250514',
-      max_tokens: 500,
-      messages: [{
-        role: 'user',
-        content: `Write a SeedAnce 2.0 AI video generation prompt for CapCut based on this description: "${sceneDescription}" for ${venueName || 'a venue'}. Mood: ${mood || 'energetic'}. Duration: ${duration} seconds. 
-
-The prompt should be 3-4 sentences, cinematic, specific about camera movement, lighting, atmosphere, and energy. Include negative prompt suggestions. Format as JSON: {"prompt": "...", "negative": "...", "style": "..."}`
-      }],
-    });
-
-    const raw = message.content[0].text.trim().replace(/```json|```/g,'').trim();
-    const parsed = JSON.parse(raw);
-    res.json({ success: true, ...parsed });
-  } catch(err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 module.exports = router;

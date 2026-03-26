@@ -51,9 +51,8 @@ router.post('/invite', authRequired, async (req, res) => {
     const ownerId  = req.user.ownerId || req.user.userId;
     const venueId  = req.user.venueId || null;
 
-    // Check plan — Pro allows up to 3 team members, Enterprise unlimited
-    const { data: owner } = await supabase.from('users').select('plan').eq('id', ownerId).single();
-    const plan = owner?.plan || 'starter';
+    // Check plan from JWT — no extra DB call needed
+    const plan = (req.user.plan || 'starter').toLowerCase();
 
     if (plan === 'starter') {
       return res.status(403).json({ error: 'Team members require Pro or Enterprise plan.', upgrade: true });

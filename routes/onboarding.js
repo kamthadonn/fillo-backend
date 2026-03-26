@@ -41,24 +41,24 @@ router.post('/setup', async (req, res) => {
     }
 
     // Safe string converter — NEVER returns empty string to Postgres
-    // Empty string on an array column causes "malformed array literal" error
+    // All array-like columns are TEXT in Supabase — store as comma-separated strings
+    // NEVER pass a JS array to Supabase TEXT columns — causes malformed array literal
     const toStr = v => {
       if (!v) return null;
       if (Array.isArray(v)) {
-        const joined = v.filter(Boolean).join(', ');
-        return joined || null;
+        const s = v.map(x => String(x).trim()).filter(Boolean).join(', ');
+        return s || null;
       }
-      if (typeof v === 'object') return JSON.stringify(v) || null;
-      const s = String(v).trim();
-      return s || null;
+      if (typeof v === 'string') {
+        const s = v.split(',').map(x => x.trim()).filter(Boolean).join(', ');
+        return s || null;
+      }
+      return null;
     };
+    const toText = v => { if (!v) return null; const s = String(v).trim(); return s || null; };
+    const toArr = toStr; // alias — same thing, columns are TEXT not TEXT[]
 
-    // Safe string for non-array text columns — returns null not ''
-    const toText = v => {
-      if (!v) return null;
-      const s = String(v).trim();
-      return s || null;
-    };
+
 
     const { data: venue, error } = await supabase
       .from('venues')
@@ -68,15 +68,15 @@ router.post('/setup', async (req, res) => {
         state:              toText(data.state),
         type:               toText(data.type) || 'venue',
         capacity:           data.capacity ? parseInt(data.capacity) : null,
-        genres:             toStr(data.genres),
-        event_types:        toStr(data.eventTypes),
-        busiest_nights:     toStr(data.busiestNights),
+        genres:             toArr(data.genres),
+        event_types:        toArr(data.eventTypes),
+        busiest_nights:     toArr(data.busiestNights),
         competitors:        toStr(data.competitors),
         keywords:           toStr(data.customKeywords),
         venue_business_type: String(data.venueBusinessType || 'tickets'),
         price_point:        toText(data.pricePoint),
-        target_customers:   toStr(data.targetCustomers),
-        product_categories: toStr(data.productCategories),
+        target_customers:   toArr(data.targetCustomers),
+        product_categories: toArr(data.productCategories),
         pilot_mode:         toText(data.pilotMode) || 'suggest',
         alert_email:        toText(data.alertEmail),
         site_url:           toText(data.siteUrl),
@@ -92,12 +92,17 @@ router.post('/setup', async (req, res) => {
 
     if (error) throw error;
 
-    // Link venue back to user record
+    // Link venue back to user record and set account_type
     if (userId) {
+      const accountType = data.venueBusinessType === 'goods' ? 'product' : 'venue';
       await supabase
         .from('users')
-        .update({ updated_at: new Date().toISOString() })
+        .update({ 
+          updated_at: new Date().toISOString(),
+          account_type: accountType,  // permanently marks this user as venue or product type
+        })
         .eq('id', userId);
+      console.log(`✅ User ${userId} account_type set to: ${accountType}`);
     }
 
     console.log(`✅ New venue: ${venue.name} (${venue.id}) → user: ${userId || 'anonymous'}`);

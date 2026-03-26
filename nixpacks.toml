@@ -1,5 +1,0 @@
-[phases.setup]
-aptPkgs = ["libatomic1"]
-
-[start]
-cmd = "node index.js"
